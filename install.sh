@@ -26,7 +26,16 @@ command -v curl >/dev/null || die "curl is required"
 command -v tar >/dev/null || die "tar is required"
 
 say "checking $REPO@$BRANCH"
-LATEST="$(curl -fsSL -H 'User-Agent: sudo-z-installer' "https://api.github.com/repos/$REPO/commits/$BRANCH" | sed -n 's/^  "sha": "\([0-9a-f]\{40\}\)".*/\1/p' | head -n1)"
+sha_of() {
+  # plain-text SHA via the GitHub API, falling back to parsing JSON in any layout
+  local s
+  s="$(curl -fsSL -m "${2:-30}" -H 'User-Agent: sudo-z' -H 'Accept: application/vnd.github.sha' "https://api.github.com/repos/$REPO/commits/$1" 2>/dev/null | tr -d '[:space:]')"
+  if ! printf '%s' "$s" | grep -qE '^[0-9a-f]{40}$'; then
+    s="$(curl -fsSL -m "${2:-30}" -H 'User-Agent: sudo-z' "https://api.github.com/repos/$REPO/commits/$1" 2>/dev/null | grep -oE '"sha" *: *"[0-9a-f]{40}"' | head -n1 | grep -oE '[0-9a-f]{40}')" || true
+  fi
+  printf '%s' "$s"
+}
+LATEST="$(sha_of "$BRANCH")"
 [ -n "$LATEST" ] || die "could not read the latest commit from GitHub"
 CURRENT="$(cat "$VER" 2>/dev/null || true)"
 

@@ -11,7 +11,7 @@ DIR="$(dirname "$APP")"
 REPO="PseudoSyntax/Sudo-Z"
 INSTALLED="$(cat "$DIR/version.txt" 2>/dev/null || echo unknown)"
 
-latest() { curl -fsS -m 4 -H 'User-Agent: sudo-z' "https://api.github.com/repos/$REPO/commits/main" 2>/dev/null | sed -n 's/^  "sha": "\([0-9a-f]\{40\}\)".*/\1/p' | head -n1 || true; }
+latest() { local s; s="$(curl -fsS -m 4 -H 'User-Agent: sudo-z' -H 'Accept: application/vnd.github.sha' "https://api.github.com/repos/$REPO/commits/${SUDOZ_BRANCH:-main}" 2>/dev/null | tr -d '[:space:]')" || true; printf '%s' "$s" | grep -qE '^[0-9a-f]{40}$' && printf '%s' "$s" || true; }
 
 cmd="${1:-start}"; shift || true
 case "$cmd" in
