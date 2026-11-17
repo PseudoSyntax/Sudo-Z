@@ -205,3 +205,18 @@ pre.ev { margin: 4px 0 0; padding: 6px 8px; background: #050605; border: 1px sol
 .copy { color: var(--dim); border: 1px solid var(--line); padding: 0 5px; font-size: 10px; }
 .copy:hover { color: var(--amber); border-color: var(--amber); }
 .flash { animation: fl .6s; } @keyframes fl { from { background: rgba(255,176,0,.25); } to { background: transparent; } }
+
+/* local engine */
+.localbox { margin: 12px 10px 0; border: 1px solid var(--line); background: var(--bg); }
+.localbox .lb { padding: 8px; }
+.localbox .cap { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 2px; }
+.localbox .cap .ok { color: var(--green); } .localbox .cap .no { color: var(--dim); }
+.localbox input[type=text] { width: 100%; background: #050605; color: var(--fg); border: 1px solid var(--line2); padding: 4px 6px; font: inherit; margin: 6px 0 4px; }
+.localbox input[type=text]:focus { outline: none; border-color: var(--amber); }
+.localbox .btn { width: 100%; margin-top: 2px; }
+.localbox .job { margin-top: 6px; font-size: 11px; color: var(--dim); }
+.localbox .job .r { display: flex; justify-content: space-between; gap: 6px; }
+.localbox .job .r span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.localbox .job .ok { color: var(--green); } .localbox .job .bad { color: var(--high); }
+.localbox .hint { color: var(--dim); font-size: 11px; margin-top: 4px; }
+.tag.home { border-color: var(--amber-d); color: var(--amber); }

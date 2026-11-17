@@ -379,3 +379,57 @@ export function runGeneric(u8, f, ctx, reason) {
   for (const p of uniq.slice(0, 40)) ctx.finding({ sev: p[1] === 'critical' ? 'high' : p[1] === 'high' ? 'medium' : 'low', category: 'Strings', tool: 'bstrings', file: f.name, title: `Executable path string: ${baseName(p[0])}`, detail: `${p[2]} (string evidence only, no timestamp)`, evidence: p[0] });
   return { tool: 'bstrings', artifact: reason || 'Unrecognised file', summary: `${b.count} strings${b.truncated ? ' (first 64 MB)' : ''}, ${b.hits.length} keyword hits, ${uniq.length} suspicious paths`, tables: [T('Keyword hits', ['Rule', 'Severity', 'String'], b.hits.map((h) => [h.title, h.sev, h.text])), T('Suspicious executable paths in strings', ['Path', 'Severity', 'Reasons'], uniq)], notes: [] };
 }
+
+// ---------------------------------------------------------------- Task Scheduler 1.0 (.job)
+import { parseJob, parseEvt, parseIndx } from '../parsers/legacy.js';
+export function runJob(u8, f, ctx) {
+  const j = parseJob(u8);
+  const name = f.name.split(/[\\/]/).pop();
+  ctx.persist({ mechanism: 'Scheduled task (.job)', name, command: j.commandLine, tool: 'Sudo-Z', file: f.name, alwaysReport: /^at\d+\.job$/i.test(name) ? 'medium' : null, mitre: [/^at\d+\.job$/i.test(name) ? 'T1053.002' : 'T1053.005'] });
+  if (j.lastRun) ctx.event({ time: j.lastRun.replace(' (local)', 'Z').replace(/Z+$/, 'Z'), tool: 'Sudo-Z', file: f.name, type: 'Scheduled task last run (.job, local time)', desc: `${name} -> ${j.commandLine}` });
+  return { tool: 'Sudo-Z', artifact: 'Task Scheduler 1.0 job (.job)', summary: `${j.commandLine.slice(0, 140)} (${j.status})`, tables: [T('Job definition', ['Field', 'Value'], [['Application', j.application], ['Parameters', j.parameters], ['Working dir', j.workingDir], ['Author', j.author], ['Comment', j.comment], ['Status', j.status], ['Last run (local)', j.lastRun], ['Exit code', j.exitCode], ['Triggers', (j.triggers || []).map((t) => `${t.type} from ${t.begin}`).join('; ')], ['Job UUID', j.uuid]])], notes: [] };
+}
+
+// ---------------------------------------------------------------- legacy .evt (XP / 2003)
+const XP_SEC = {
+  517: ['critical', 'Security log cleared', 'T1070.001', 'Defense Evasion'], 624: ['medium', 'User account created', 'T1136', 'Persistence'], 626: ['low', 'User account enabled', 'T1098', 'Persistence'],
+  628: ['low', 'Password set', 'T1098', 'Persistence'], 630: ['low', 'User account deleted', 'T1531', 'Impact'], 612: ['medium', 'Audit policy changed', 'T1562.002', 'Defense Evasion'],
+  601: ['low', 'Service installed (Security)', 'T1543.003', 'Persistence'], 602: ['low', 'Scheduled task created', 'T1053.005', 'Persistence'],
+};
+export function runEvt(u8, f, ctx) {
+  const recs = parseEvt(u8);
+  const b = f.name.split(/[\\/]/).pop().toLowerCase();
+  const channel = /secevent/.test(b) ? 'Security' : /sysevent/.test(b) ? 'System' : /appevent/.test(b) ? 'Application' : 'Unknown';
+  const fails = new Map(); const notable = [];
+  for (const r of recs) {
+    const s = r.Strings || []; const blob = s.join(' | ');
+    if (r.Computer) ctx.hosts.add(r.Computer);
+    ctx.text(blob, f.name);
+    const add = (sev, title, mitre, cat) => { ctx.finding({ sev, category: cat, tool: 'EvtxECmd (.evt)', file: f.name, time: r.TimeCreated, title: `${r.EventId} ${title}`, evidence: blob.slice(0, 1200), mitre: [mitre] }); notable.push([r.TimeCreated, sev, r.EventId, r.Provider, title, blob.slice(0, 300)]); };
+    if (/security/i.test(r.Provider) || channel === 'Security') {
+      if (XP_SEC[r.EventId]) { const [sev, t, m, c] = XP_SEC[r.EventId]; add(sev, `${t}: ${s[0] || ''}`, m, c); }
+      if ([632, 636, 660].includes(r.EventId)) add(/administrators|domain admins|enterprise admins/i.test(blob) ? 'high' : 'low', `Member added to group ${s[2] || ''}`, 'T1098', 'Persistence');
+      if (r.EventId >= 529 && r.EventId <= 539) { const src = s[11] || s[6] || '-'; const e = fails.get(src) || { n: 0, users: new Set(), first: r.TimeCreated }; e.n++; e.users.add(s[0]); fails.set(src, e); }
+      if (r.EventId === 592) { ctx.exec_({ path: s[1] || '', tool: 'EvtxECmd (.evt)', file: f.name, time: r.TimeCreated, source: 'Security 592' }); ctx.event({ time: r.TimeCreated, tool: 'EvtxECmd (.evt)', file: f.name, type: '592 Process created', desc: s[1] || '' }); }
+      if ((r.EventId === 528 || r.EventId === 540) && s[13] && /\d+\.\d+\.\d+\.\d+/.test(s[13])) { ctx.indicators.add(/^(10|192\.168|172\.(1[6-9]|2\d|3[01]))\./.test(s[13]) ? 'internal_ip' : 'ipv4', s[13], f.name, `logon ${s[0]} type ${s[3]}`); if (s[3] === '10') ctx.event({ time: r.TimeCreated, tool: 'EvtxECmd (.evt)', file: f.name, type: 'RDP logon (528 type 10)', desc: `${s[0]} from ${s[13]}` }); }
+    }
+    if (r.Provider === 'Service Control Manager' && r.EventId === 7035 && /start/i.test(blob) && /psexesvc|remcom|paexec/i.test(blob)) add('high', `Remote execution service started: ${s[0]}`, 'T1569.002', 'Lateral Movement');
+    if (r.Provider === 'Eventlog' && [6005, 6006, 6008].includes(r.EventId)) ctx.event({ time: r.TimeCreated, tool: 'EvtxECmd (.evt)', file: f.name, type: { 6005: 'Event log started (boot)', 6006: 'Clean shutdown', 6008: 'Unexpected shutdown' }[r.EventId], desc: r.Computer });
+  }
+  for (const [src, e] of fails) if (e.n >= 20 || (e.n >= 10 && e.users.size >= 5)) ctx.finding({ sev: 'high', category: 'Credential Access', tool: 'EvtxECmd (.evt)', file: f.name, time: e.first, title: `${e.n} failed logons from ${src} (${e.users.size} accounts)`, evidence: [...e.users].join(', '), mitre: ['T1110'] });
+  return { tool: 'EvtxECmd (.evt)', artifact: `Legacy event log (.evt, ${channel})`, summary: `${recs.length} records`, tables: [T('Notable events', ['Time', 'Severity', 'EventId', 'Source', 'Rule', 'Strings'], notable), T('All events', ['TimeGenerated', 'EventId', 'Type', 'Source', 'Computer', 'User', 'Strings'], recs.map((r) => [r.TimeCreated, r.EventId, r.Type, r.Provider, r.Computer, r.UserId, (r.Strings || []).join(' | ').slice(0, 600)]))], notes: ['XP/2003 events have no message templates here; the inserted strings are shown raw.'] };
+}
+
+// ---------------------------------------------------------------- $I30
+export function runIndx(u8, f, ctx, shared) {
+  const rows = parseIndx(u8);
+  const mft = shared.mft;
+  const out = rows.map((r) => [r.slack ? 'SLACK (deleted)' : 'active', r.name, r.created, r.modified, r.recordChanged, r.accessed, r.size, r.entry, r.parent, mft ? mft.pathOf(r.parent).replace(/^\./, 'C:') : '']);
+  for (const r of rows) {
+    const full = mft ? `${mft.pathOf(r.parent).replace(/^\./, 'C:')}\\${r.name}` : r.name;
+    const pc = classifyPath(full);
+    if (r.slack) ctx.event({ time: r.created, tool: 'MFTECmd ($I30)', file: f.name, type: 'Deleted directory entry ($I30 slack)', desc: full });
+    if (pc.sev || (r.slack && pc.tool)) ctx.finding({ sev: pc.sev || 'medium', category: 'File System', tool: 'MFTECmd', file: f.name, time: r.created, title: `$I30 ${r.slack ? 'slack (deleted) ' : ''}entry: ${r.name}`, detail: pc.reasons.join('; '), evidence: full, mitre: ['T1070.004'] });
+  }
+  return { tool: 'MFTECmd', artifact: '$I30 directory index', summary: `${rows.length} entries (${rows.filter((r) => r.slack).length} recovered from slack)`, tables: [T('$I30 entries', ['State', 'Name', 'Created', 'Modified', 'RecordChanged', 'Accessed', 'Size', 'Entry', 'ParentEntry', 'ParentPath'], out, 'Slack entries are names of files that were deleted or renamed out of this directory.')], notes: [] };
+}
