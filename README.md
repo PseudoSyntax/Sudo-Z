@@ -61,7 +61,7 @@ node cli/sudo-z.mjs C:\kape\out\C -o out/ --no-defang
 
 The CLI writes `report.md`, `report.json`, `findings.csv`, `indicators.csv` and `timeline.csv`.
 
-**Hosting your own copy on GitHub Pages:** fork the repo, then Settings, Pages, Source "GitHub Actions". The included `pages.yml` workflow publishes on every push to `main`. There is no build step.
+**Hosting your own copy on GitHub Pages:** fork the repo, then Settings, Pages, Source "Deploy from a branch", branch `main`, folder `/ (root)`. Every push to `main` republishes automatically. There is no build step.
 
 ## The console
 
@@ -425,7 +425,7 @@ js/ioc/                 shared heuristics, indicator extraction, analysis contex
 cli/sudo-z.mjs          headless runner
 install.ps1 / install.sh  installers and updaters
 tools/                  local launchers (launch.ps1, sudo-z.sh) and a fallback web server
-.github/workflows/      CI checks, installer tests on Windows and Linux, Pages deploy
+.github/workflows/      CI checks and installer tests on Windows and Linux
 ```
 
 No dependencies, no build step, no network calls with your data.
