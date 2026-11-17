@@ -6,6 +6,40 @@ Drop Windows artifacts (one file, many files, a folder, or a KAPE triage zip) an
 
 Nothing is uploaded. Files are read with the browser File API and parsed in a Web Worker on your own machine. Sudo-Z is a static site, so it runs from GitHub Pages and keeps working offline once loaded.
 
+## Quick start
+
+**Option 1: just use it.** Open **https://pseudosyntax.github.io/Sudo-Z/**, drop your files, press EXECUTE ANALYSIS. Nothing to install, always the latest version.
+
+**Option 2: install it locally** (works offline, one command, the same command updates it).
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/PseudoSyntax/Sudo-Z/main/install.ps1 | iex
+```
+
+Linux or macOS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/PseudoSyntax/Sudo-Z/main/install.sh | bash
+```
+
+Then:
+
+| Command | What it does |
+|---|---|
+| `sudo-z` | Starts the console on `http://localhost:8765` and opens your browser |
+| `sudo-z update` | Pulls the newest version from GitHub and replaces the old code |
+| `sudo-z version` | Shows the installed version and whether an update is out |
+| `sudo-z cli triage.zip -o out` | Runs the analysis headless (needs Node 18+) |
+| `sudo-z uninstall` | Removes it |
+
+On Windows open a new terminal after installing so `sudo-z` is on your PATH, or use the Start Menu shortcut. The launcher also tells you when an update is available.
+
+The installer downloads the latest commit from this repo, checks it is a complete copy, swaps it in and deletes the old one. If anything fails the old version stays in place. It installs to `%LOCALAPPDATA%\Sudo-Z` on Windows and `~/.local/share/sudo-z` on Linux/macOS and needs no admin rights.
+
+Opening `index.html` straight from disk will not work, because browsers block ES modules and Web Workers on `file://`. That is why the launcher runs a small web server bound to localhost only.
+
 ## Why I built it
 
 Eric Zimmerman's tools are the standard for Windows artifact parsing [1], but each tool covers one artifact type and produces CSV that still has to be filtered and correlated by hand in Timeline Explorer. During an investigation or a CTF that means running a dozen tools, opening a dozen CSVs and remembering which columns matter.
@@ -18,7 +52,7 @@ Sudo-Z collapses that into one step. The aim is not just parsing but hunting: th
 
 **Many files:** zip them first, or drag a whole folder in. KAPE Targets output (for example `!SANS_Triage` or `KapeTriage`) works as is. Nested zips are opened up to three levels deep.
 
-**Headless:** the same engine runs in Node 18 or later.
+**Headless:** the same engine runs in Node 18 or later, either through `sudo-z cli` or directly from a clone.
 
 ```
 node cli/sudo-z.mjs triage.zip -o out/
@@ -27,7 +61,7 @@ node cli/sudo-z.mjs C:\kape\out\C -o out/ --no-defang
 
 The CLI writes `report.md`, `report.json`, `findings.csv`, `indicators.csv` and `timeline.csv`.
 
-**Hosting on GitHub Pages:** Settings, Pages, Source "Deploy from a branch", branch `main`, folder `/ (root)`. There is no build step.
+**Hosting your own copy on GitHub Pages:** fork the repo, then Settings, Pages, Source "Deploy from a branch", branch `main`, folder `/ (root)`. Every push to `main` republishes automatically. There is no build step.
 
 ## The console
 
@@ -389,6 +423,9 @@ js/parsers/             evtx, prefetch, lnk, shellitems, jumplist, regf, ntfs, s
 js/tools/               tool level logic: evtx rules, registry plugins, artifact wrappers
 js/ioc/                 shared heuristics, indicator extraction, analysis context
 cli/sudo-z.mjs          headless runner
+install.ps1 / install.sh  installers and updaters
+tools/                  local launchers (launch.ps1, sudo-z.sh) and a fallback web server
+.github/workflows/      CI checks and installer tests on Windows and Linux
 ```
 
 No dependencies, no build step, no network calls with your data.
