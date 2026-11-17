@@ -29,14 +29,24 @@ function Say($msg, $color = 'Gray') { if (-not $Quiet) { Write-Host $msg -Foregr
 
 $App      = Join-Path $Dir 'app'
 $VerFile  = Join-Path $Dir 'version.txt'
-$Headers  = @{ 'User-Agent' = 'sudo-z-installer'; 'Accept' = 'application/vnd.github+json' }
+
+function Get-LatestSha([string]$Repo, [string]$Branch, [int]$Timeout = 30) {
+  # 1) GitHub API (uses GITHUB_TOKEN if set)  2) git ref advertisement, which is not API rate limited
+  $h = @{ 'User-Agent' = 'sudo-z' }
+  if ($env:GITHUB_TOKEN) { $h['Authorization'] = "Bearer $env:GITHUB_TOKEN" }
+  try { $s = (Invoke-RestMethod "https://api.github.com/repos/$Repo/commits/$Branch" -Headers $h -TimeoutSec $Timeout).sha; if ($s -match '^[0-9a-f]{40}$') { return $s } } catch { }
+  try {
+    $r = Invoke-WebRequest "https://github.com/$Repo.git/info/refs?service=git-upload-pack" -UseBasicParsing -UserAgent 'git/2.40' -TimeoutSec $Timeout
+    $txt = if ($r.Content -is [byte[]]) { [Text.Encoding]::ASCII.GetString($r.Content) } else { [string]$r.Content }
+    $m = [regex]::Match($txt, "([0-9a-f]{40}) refs/heads/$([regex]::Escape($Branch))(?![\w/.-])")
+    if ($m.Success) { return $m.Groups[1].Value }
+  } catch { }
+  return $null
+}
 
 Say "[sudo-z] checking $Repo@$Branch" 'DarkYellow'
-try {
-  $latest = (Invoke-RestMethod "https://api.github.com/repos/$Repo/commits/$Branch" -Headers $Headers -TimeoutSec 30).sha
-} catch {
-  throw "Could not reach GitHub to find the latest version: $($_.Exception.Message)"
-}
+$latest = Get-LatestSha $Repo $Branch 30
+if (-not $latest) { throw 'Could not reach GitHub to find the latest version (check your connection or proxy).' }
 $current = if (Test-Path $VerFile) { (Get-Content $VerFile -Raw).Trim() } else { '' }
 
 if (-not $Force -and $current -eq $latest -and (Test-Path (Join-Path $App 'index.html'))) {

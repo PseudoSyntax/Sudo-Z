@@ -42,6 +42,8 @@ jobs:
     name: Installer (Linux)
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - name: Install from GitHub
         run: curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/install.sh" | SUDOZ_DIR=$RUNNER_TEMP/sz SUDOZ_BIN=$RUNNER_TEMP/bin bash
@@ -53,6 +55,9 @@ jobs:
           $RUNNER_TEMP/bin/sudo-z update
           SUDOZ_FORCE=1 SUDOZ_DIR=$RUNNER_TEMP/sz SUDOZ_BIN=$RUNNER_TEMP/bin bash $RUNNER_TEMP/sz/app/install.sh
           test ! -e $RUNNER_TEMP/sz/app/STALE
+      - name: Fallback works without the API
+        run: |
+          GITHUB_TOKEN= SUDOZ_REPO=${{ github.repository }} bash -c 'source <(sed -n "/^sha_of()/,/^}/p" $RUNNER_TEMP/sz/app/install.sh); REPO=$SUDOZ_REPO; curl() { case "$*" in *api.github.com*) return 22;; *) command curl "$@";; esac; }; s=$(sha_of main); echo "fallback sha $s"; [ ${#s} -eq 40 ]'
       - name: Launcher serves the console
         run: |
           $RUNNER_TEMP/bin/sudo-z version
@@ -64,6 +69,8 @@ jobs:
     name: Installer (Windows)
     if: github.event_name != 'pull_request'
     runs-on: windows-latest
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - name: Install from GitHub
         shell: powershell

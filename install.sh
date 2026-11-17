@@ -27,11 +27,13 @@ command -v tar >/dev/null || die "tar is required"
 
 say "checking $REPO@$BRANCH"
 sha_of() {
-  # plain-text SHA via the GitHub API, falling back to parsing JSON in any layout
-  local s
-  s="$(curl -fsSL -m "${2:-30}" -H 'User-Agent: sudo-z' -H 'Accept: application/vnd.github.sha' "https://api.github.com/repos/$REPO/commits/$1" 2>/dev/null | tr -d '[:space:]')"
+  # 1) GitHub API as plain text (uses GITHUB_TOKEN if set)
+  # 2) git ref advertisement, which is not subject to the API rate limit
+  local s auth=()
+  [ -n "${GITHUB_TOKEN:-}" ] && auth=(-H "Authorization: Bearer $GITHUB_TOKEN")
+  s="$(curl -fsSL -m "${2:-30}" -H 'User-Agent: sudo-z' -H 'Accept: application/vnd.github.sha' ${auth[@]+"${auth[@]}"} "https://api.github.com/repos/$REPO/commits/$1" 2>/dev/null | tr -d '[:space:]')" || true
   if ! printf '%s' "$s" | grep -qE '^[0-9a-f]{40}$'; then
-    s="$(curl -fsSL -m "${2:-30}" -H 'User-Agent: sudo-z' "https://api.github.com/repos/$REPO/commits/$1" 2>/dev/null | grep -oE '"sha" *: *"[0-9a-f]{40}"' | head -n1 | grep -oE '[0-9a-f]{40}')" || true
+    s="$(curl -fsSL -m "${2:-30}" -A 'git/2.40' "https://github.com/$REPO.git/info/refs?service=git-upload-pack" 2>/dev/null | grep -aoE "[0-9a-f]{40} refs/heads/$1\$|[0-9a-f]{40} refs/heads/$1[^a-zA-Z0-9_./-]" | head -n1 | cut -c1-40)" || true
   fi
   printf '%s' "$s"
 }
