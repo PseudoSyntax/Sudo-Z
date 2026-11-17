@@ -1,5 +1,5 @@
 // Sudo-Z UI controller.
-import { CATALOG, NOT_ACCEPTED_HELP } from './catalog.js';
+import { CATALOG, NOT_ACCEPTED_HELP, availability } from './catalog.js';
 import { markdown, csv, timelineCsv, findingsCsv, indicatorsCsv, mitreSummary, indicatorLabel, defang } from './report.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -279,7 +279,8 @@ function toolsView() {
   <p>Eric Zimmerman's tools are the standard for Windows artifact parsing, but each one handles a single artifact type and produces CSV that still has to be read, filtered and correlated by hand in Timeline Explorer. Sudo-Z collapses that workflow: drop a KAPE collection or a pile of artifacts, and every file is identified, routed to the right parser, normalised into one super timeline and graded by one detection engine.</p>
   <p>The goal is IOC spotting, not just parsing. The same path and command-line heuristics (LOLBins, user-writable execution paths, masquerading, offensive tool names, encoded PowerShell, download cradles, credential dumping, shadow copy deletion, log clearing) run against Prefetch, Amcache, ShimCache, BAM, UserAssist, services, Run keys, scheduled tasks, LNKs, jump lists, $MFT, browser history and every event log. When two independent artifacts agree that a suspicious binary ran, Sudo-Z raises a correlation finding.</p>
   <p class="muted">Sudo-Z runs as a static GitHub Pages site. The original tools are Windows .NET executables and cannot run in a browser, so each parser here is an independent JavaScript implementation of the same file formats. Use the original tools to validate anything that goes in a legal or HR report.</p></div>
-  ${CATALOG.map((c) => `<div class="tool"><div class="tn"><b>${esc(c.tool)}</b><span class="st ${c.status === 'n/a' ? 'na' : c.status}">${lbl[c.status]}</span></div><div class="acc">ACCEPTS: ${esc(c.accepts)}</div><p>${esc(c.what)}</p><p class="sz">${esc(c.sudoz)}</p></div>`).join('')}`;
+  <div class="intent"><h2>WEBSITE vs HOME INSTALL</h2><p>The GitHub Pages site runs everything Sudo-Z rebuilt in JavaScript. The home install (one command, see README) adds a local server that can also run programs a browser cannot: <b>Volatility 3</b> on memory images and the <b>original Eric Zimmerman tools</b> on an artifact folder. Each tool below lists where it is available.</p></div>
+  ${CATALOG.map((c) => { const [pg, hm] = availability(c); return `<div class="tool"><div class="tn"><b>${esc(c.tool)}</b><span class="st ${c.status === 'n/a' ? 'na' : c.status}">${lbl[c.status]}</span></div><div class="acc">ACCEPTS: ${esc(c.accepts)}</div><div class="acc"><span style="color:var(--fg)">PAGES:</span> ${esc(pg)} &nbsp;·&nbsp; <span style="color:var(--amber)">HOME:</span> ${esc(hm)}</div><p>${esc(c.what)}</p><p class="sz">${esc(c.sudoz)}</p></div>`; }).join('')}`;
 }
 
 // ---------------------------------------------------------------- generic paginated table
@@ -300,3 +301,70 @@ function table(host, cols, rows, { pageSize = 200, name } = {}) {
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
 
 render();
+
+// ---------------------------------------------------------------- home install: local engine (Volatility 3, original EZ tools)
+const LOCAL = { caps: null };
+const api = async (path, body) => {
+  const r = await fetch(path, { method: body ? 'POST' : 'GET', headers: { 'X-Sudo-Z': '1', ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+  if (!r.ok || j.error) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+};
+async function initLocal() {
+  const host = $('#local');
+  try {
+    if (!/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) throw new Error('hosted');
+    LOCAL.caps = await api('/api/caps');
+  } catch {
+    host.innerHTML = `<div class="localbox"><div class="ph"><span class="code">00B</span> HOME-ONLY TOOLS</div><div class="lb hint">Memory analysis with <b style="color:var(--amber)">Volatility 3</b> and running the <b style="color:var(--amber)">original EZ tools</b> need the home install, because a browser cannot run Python or Windows programs. Install with one command (see README), run <code>sudo-z setup</code>, then <code>sudo-z</code>.<br><br>Here you can still drop Volatility 3 JSON output (<code>vol -r json ... &gt; windows.pslist.json</code>).</div></div>`;
+    return;
+  }
+  $('#mode').textContent = 'HOME ENGINE'; $('#mode').classList.add('home');
+  renderLocal();
+}
+function renderLocal() {
+  const c = LOCAL.caps; const v = c.vol3; const ez = c.ez;
+  $('#local').innerHTML = `<div class="localbox"><div class="ph"><span class="code">00B</span> LOCAL ENGINE</div><div class="lb">
+    <div class="cap"><span>Volatility 3</span><span class="${v.available ? 'ok' : 'no'}">${v.available ? 'v' + esc(v.version) : 'not installed'}</span></div>
+    <div class="cap"><span>Original EZ tools</span><span class="${ez.tools.length ? 'ok' : 'no'}">${ez.tools.length ? ez.tools.length + ' found' : 'not installed'}</span></div>
+    <input type="text" id="memPath" placeholder="memory image path, e.g. D:\\case\\mem.raw" ${v.available ? '' : 'disabled'}>
+    <button class="btn" id="runVol" ${v.available ? '' : 'disabled'}>RUN VOLATILITY 3</button>
+    ${v.available ? '' : '<div class="hint">Install: <code>sudo-z setup vol</code>, then restart sudo-z.</div>'}
+    <input type="text" id="ezPath" placeholder="artifact folder (KAPE / Velociraptor output)" ${ez.tools.length ? '' : 'disabled'}>
+    <button class="btn" id="runEz" ${ez.tools.length ? '' : 'disabled'}>RUN ORIGINAL EZ TOOLS</button>
+    ${ez.tools.length ? '' : `<div class="hint">Install: <code>sudo-z setup ez</code>${c.os === 'Windows' ? '' : ' (needs pwsh + .NET 10 off Windows)'}.</div>`}
+    <div class="job" id="job"></div>
+    <div class="hint">Images and folders are read in place by the local server; nothing is copied into the browser. Outputs: ${esc(c.runs)}</div>
+  </div></div>`;
+  $('#runVol')?.addEventListener('click', () => startJob('vol3', { image: $('#memPath').value }));
+  $('#runEz')?.addEventListener('click', () => startJob('ez', { path: $('#ezPath').value }));
+}
+async function startJob(kind, body) {
+  const el = $('#job');
+  el.innerHTML = '<div>starting…</div>';
+  let job;
+  try { job = await api(kind === 'vol3' ? '/api/vol3/run' : '/api/ez/run', body); }
+  catch (e) { el.innerHTML = `<div class="bad">${esc(e.message)}</div>`; return; }
+  const poll = async () => {
+    try { job = await api(`/api/job/${job.id}`); } catch (e) { el.innerHTML = `<div class="bad">${esc(e.message)}</div>`; return; }
+    const rows = job.results.map((r) => `<div class="r"><span>${esc(r.plugin || r.tool)}${r.label ? ' (' + esc(r.label) + ')' : ''}</span><span class="${r.ok ? 'ok' : 'bad'}" title="${esc(r.error || '')}">${r.ok ? 'OK' : 'FAIL'}</span></div>`).join('');
+    el.innerHTML = `<div>${job.status === 'done' ? 'DONE' : 'RUNNING'} ${job.done}/${job.total || '?'} ${job.current ? ':: ' + esc(job.current) : ''}</div>${rows}`;
+    if (job.status !== 'done') return setTimeout(poll, 1500);
+    if (kind === 'vol3') {
+      const files = [];
+      for (const r of job.results) if (r.file) {
+        const res = await fetch(`/api/job/${job.id}/file/${encodeURIComponent(r.file)}`, { headers: { 'X-Sudo-Z': '1' } });
+        if (res.ok) { const buf = await res.arrayBuffer(); if (buf.byteLength > 4) files.push({ file: new File([buf], r.file), name: `memory/${r.file}` }); }
+      }
+      el.insertAdjacentHTML('beforeend', `<div class="ok">${files.length} plugin outputs staged for analysis</div>`);
+      stage(files);
+      if (files.length) $('#run').click();
+    } else {
+      const csvs = job.results.flatMap((r) => (r.files || []).map((f) => f));
+      el.insertAdjacentHTML('beforeend', `<div>${csvs.length} CSV files written (open in Timeline Explorer)</div><button class="btn" id="openOut">OPEN OUTPUT FOLDER</button>`);
+      $('#openOut').addEventListener('click', () => api('/api/open', { job: job.id }).catch((e) => el.insertAdjacentHTML('beforeend', `<div class="bad">${esc(e.message)}</div>`)));
+    }
+  };
+  poll();
+}
+initLocal();

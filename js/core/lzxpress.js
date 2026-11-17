@@ -64,3 +64,31 @@ export function lzxpressHuffmanDecompress(src, outSize) {
   }
   return out;
 }
+
+// Plain LZ77 "Xpress" (MS-XCA 2.4), used by ESE compressed columns.
+export function lzxpressPlainDecompress(src, outSize = 0) {
+  const out = []; let ip = 0, flags = 0, flagCount = 0, lastHalf = 0;
+  const lim = outSize || Infinity;
+  while (out.length < lim) {
+    if (flagCount === 0) { if (ip + 4 > src.length) break; flags = (src[ip] | (src[ip + 1] << 8) | (src[ip + 2] << 16) | (src[ip + 3] << 24)) >>> 0; ip += 4; flagCount = 32; }
+    flagCount--;
+    if (!((flags >>> flagCount) & 1)) { if (ip >= src.length) break; out.push(src[ip++]); continue; }
+    if (ip + 2 > src.length) break;
+    const mb = src[ip] | (src[ip + 1] << 8); ip += 2;
+    let len = mb & 7; const off = (mb >> 3) + 1;
+    if (len === 7) {
+      if (lastHalf === 0) { len = src[ip] & 15; lastHalf = ip; ip++; }
+      else { len = src[lastHalf] >> 4; lastHalf = 0; }
+      if (len === 15) {
+        len = src[ip++];
+        if (len === 255) { len = src[ip] | (src[ip + 1] << 8); ip += 2; if (len === 0) { len = (src[ip] | (src[ip + 1] << 8) | (src[ip + 2] << 16) | (src[ip + 3] << 24)) >>> 0; ip += 4; } if (len < 22) throw new Error('bad xpress length'); len -= 22; }
+        len += 15;
+      }
+      len += 7;
+    }
+    len += 3;
+    if (off > out.length) throw new Error('bad xpress offset');
+    for (let i = 0; i < len; i++) out.push(out[out.length - off]);
+  }
+  return Uint8Array.from(out.slice(0, lim === Infinity ? out.length : lim));
+}

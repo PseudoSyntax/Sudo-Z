@@ -4,6 +4,7 @@
     sudo-z update                              pull the latest version from GitHub
     sudo-z version                             show installed commit and check for updates
     sudo-z cli <args>                          run the headless analyser (needs Node 18+)
+    sudo-z setup [vol|ez]                      install home-only extras: Volatility 3 (memory) and the original EZ tools
     sudo-z uninstall                           remove Sudo-Z
   The console uses ES modules and a Web Worker, which browsers block on file://,
   so it is served from a tiny local web server bound to localhost only.
@@ -36,6 +37,17 @@ function Get-LatestSha([string]$Repo, [string]$Branch, [int]$Timeout = 30) {
 }
 function Get-Latest { Get-LatestSha $Repo 'main' 4 }
 
+function Find-Python {
+  # venv first (has Volatility 3), then the py launcher, then python on PATH (skipping the Microsoft Store stub)
+  $v = Join-Path $Dir 'venv\Scripts\python.exe'
+  if (Test-Path $v) { return ,@($v) }
+  foreach ($c in @(@('py', '-3'), @('python'), @('python3'))) {
+    if (-not (Get-Command $c[0] -ErrorAction SilentlyContinue)) { continue }
+    try { $out = & $c[0] @($c[1..($c.Length)] | Where-Object { $_ }) -c 'import sys; print(sys.version_info >= (3, 8))' 2>$null; if ("$out".Trim() -eq 'True') { return ,@($c) } } catch { }
+  }
+  return $null
+}
+
 switch ($Command.ToLower()) {
   'update' {
     # run a copy so the installer can replace the folder it lives in
@@ -56,6 +68,34 @@ switch ($Command.ToLower()) {
     & node (Join-Path $App 'cli\sudo-z.mjs') @Rest
     return
   }
+  'setup' {
+    $what = if ($Rest -and $Rest[0]) { $Rest[0].ToLower() } else { 'all' }
+    if ($what -in 'all', 'vol') {
+      $py = Find-Python
+      if (-not $py) { Write-Host 'Volatility 3 needs Python 3.8+. Install it with: winget install Python.Python.3.12  (then run sudo-z setup vol again)' -ForegroundColor Yellow }
+      else {
+        Write-Host "[sudo-z] creating $Dir\venv and installing Volatility 3"
+        & $py[0] @($py[1..($py.Length)] | Where-Object { $_ }) -m venv (Join-Path $Dir 'venv')
+        $vpy = Join-Path $Dir 'venv\Scripts\python.exe'
+        & $vpy -m pip install -q -U pip 2>$null
+        & $vpy -m pip install -U 'volatility3[full]'
+        if ($LASTEXITCODE -ne 0) { & $vpy -m pip install -U volatility3 }
+        $vol = Join-Path $Dir 'venv\Scripts\vol.exe'
+        if (Test-Path $vol) { Write-Host "[sudo-z] Volatility 3 ready ($((& $vol -h 2>&1 | Select-String 'Framework [0-9.]+').Matches.Value))" -ForegroundColor Green }
+      }
+    }
+    if ($what -in 'all', 'ez') {
+      $ez = Join-Path $Dir 'ez'
+      New-Item -ItemType Directory -Force -Path $ez | Out-Null
+      $gzt = Join-Path $ez 'Get-ZimmermanTools.ps1'
+      Write-Host '[sudo-z] downloading the original Eric Zimmerman tools (Get-ZimmermanTools, .NET 10 builds)'
+      Invoke-WebRequest 'https://raw.githubusercontent.com/EricZimmerman/Get-ZimmermanTools/master/Get-ZimmermanTools.ps1' -OutFile $gzt -UseBasicParsing
+      & powershell -NoProfile -ExecutionPolicy Bypass -File $gzt -Dest $ez -NetVersion 10
+      $rt = ''; try { $rt = (& dotnet --list-runtimes 2>$null) -join "`n" } catch { }
+      if ($rt -notmatch 'Microsoft\.(NETCore|WindowsDesktop)\.App 10\.') { Write-Host '[sudo-z] The EZ tools need the .NET 10 runtime: winget install Microsoft.DotNet.Runtime.10' -ForegroundColor Yellow }
+    }
+    return
+  }
   'uninstall' {
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
     [Environment]::SetEnvironmentVariable('Path', (($userPath -split ';') | Where-Object { $_ -and $_ -ne $Dir }) -join ';', 'User')
@@ -66,9 +106,19 @@ switch ($Command.ToLower()) {
   }
 }
 
-# ---------------------------------------------------------------- start: local static server
+# ---------------------------------------------------------------- start
 $latest = Get-Latest
 if ($latest -and $installed -ne $latest) { Write-Host "[sudo-z] update available ($($latest.Substring(0,7))). Run: sudo-z update" -ForegroundColor Yellow }
+
+# Python available: run the companion server (console + Volatility 3 + EZ tool runner)
+$py = Find-Python
+if ($py) {
+  $pyArgs = @($py[1..($py.Length)] | Where-Object { $_ }) + @((Join-Path $App 'tools\server.py'), "$Port")
+  if ($NoBrowser) { $pyArgs += '--no-browser' }
+  & $py[0] @pyArgs
+  return
+}
+Write-Host '[sudo-z] Python not found: serving the console only. Memory analysis and the EZ tool runner need Python (winget install Python.Python.3.12, then sudo-z setup).' -ForegroundColor Yellow
 
 $mime = @{
   '.html' = 'text/html; charset=utf-8'; '.js' = 'text/javascript; charset=utf-8'; '.mjs' = 'text/javascript; charset=utf-8'

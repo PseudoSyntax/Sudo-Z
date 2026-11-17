@@ -32,6 +32,14 @@ jobs:
           if (!rep.indicators.some((i) => i.value === '45.77.12.9')) throw new Error('expected IP indicator');
           EOF
           node /tmp/smoke.mjs
+      - name: Local server compiles and enforces its guards
+        run: |
+          python3 -m py_compile tools/server.py
+          (python3 tools/server.py 8790 --no-browser > /tmp/srv.log 2>&1 &) ; sleep 3
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8790/api/caps)" = 403
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Sudo-Z: 1' -H 'Host: evil.example' http://localhost:8790/api/caps)" = 403
+          curl -fsS -H 'X-Sudo-Z: 1' http://localhost:8790/api/caps | grep -q '"local": true'
+          curl -fsSI http://localhost:8790/js/engine.js | grep -qi javascript
       - name: CLI runs
         run: |
           printf 'powershell -nop -w hidden -enc SQBFAFgA\n' > ConsoleHost_history.txt
