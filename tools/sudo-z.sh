@@ -11,7 +11,12 @@ DIR="$(dirname "$APP")"
 REPO="PseudoSyntax/Sudo-Z"
 INSTALLED="$(cat "$DIR/version.txt" 2>/dev/null || echo unknown)"
 
-latest() { local s; s="$(curl -fsS -m 4 -H 'User-Agent: sudo-z' -H 'Accept: application/vnd.github.sha' "https://api.github.com/repos/$REPO/commits/${SUDOZ_BRANCH:-main}" 2>/dev/null | tr -d '[:space:]')" || true; printf '%s' "$s" | grep -qE '^[0-9a-f]{40}$' && printf '%s' "$s" || true; }
+latest() {
+  local s b="${SUDOZ_BRANCH:-main}"
+  s="$(curl -fsS -m 4 -H 'User-Agent: sudo-z' -H 'Accept: application/vnd.github.sha' "https://api.github.com/repos/$REPO/commits/$b" 2>/dev/null | tr -d '[:space:]')" || true
+  printf '%s' "$s" | grep -qE '^[0-9a-f]{40}$' || s="$(curl -fsS -m 4 -A 'git/2.40' "https://github.com/$REPO.git/info/refs?service=git-upload-pack" 2>/dev/null | grep -aoE "[0-9a-f]{40} refs/heads/$b" | head -n1 | cut -c1-40)" || true
+  printf '%s' "$s" | grep -qE '^[0-9a-f]{40}$' && printf '%s' "$s" || true
+}
 
 cmd="${1:-start}"; shift || true
 case "$cmd" in

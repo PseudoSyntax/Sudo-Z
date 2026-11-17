@@ -21,9 +21,20 @@ $App = Join-Path $Dir 'app'
 $VerFile = Join-Path $Dir 'version.txt'
 $installed = if (Test-Path $VerFile) { (Get-Content $VerFile -Raw).Trim() } else { 'unknown' }
 
-function Get-Latest {
-  try { (Invoke-RestMethod "https://api.github.com/repos/$Repo/commits/main" -Headers @{ 'User-Agent' = 'sudo-z' } -TimeoutSec 4).sha } catch { $null }
+function Get-LatestSha([string]$Repo, [string]$Branch, [int]$Timeout = 30) {
+  # 1) GitHub API (uses GITHUB_TOKEN if set)  2) git ref advertisement, which is not API rate limited
+  $h = @{ 'User-Agent' = 'sudo-z' }
+  if ($env:GITHUB_TOKEN) { $h['Authorization'] = "Bearer $env:GITHUB_TOKEN" }
+  try { $s = (Invoke-RestMethod "https://api.github.com/repos/$Repo/commits/$Branch" -Headers $h -TimeoutSec $Timeout).sha; if ($s -match '^[0-9a-f]{40}$') { return $s } } catch { }
+  try {
+    $r = Invoke-WebRequest "https://github.com/$Repo.git/info/refs?service=git-upload-pack" -UseBasicParsing -UserAgent 'git/2.40' -TimeoutSec $Timeout
+    $txt = if ($r.Content -is [byte[]]) { [Text.Encoding]::ASCII.GetString($r.Content) } else { [string]$r.Content }
+    $m = [regex]::Match($txt, "([0-9a-f]{40}) refs/heads/$([regex]::Escape($Branch))(?![\w/.-])")
+    if ($m.Success) { return $m.Groups[1].Value }
+  } catch { }
+  return $null
 }
+function Get-Latest { Get-LatestSha $Repo 'main' 4 }
 
 switch ($Command.ToLower()) {
   'update' {
