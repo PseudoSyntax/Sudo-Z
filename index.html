@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SUDO-Z // DFIR Triage Console</title>
+<meta name="description" content="Browser-side Windows forensic triage built on the Eric Zimmerman toolset. Drop artifacts or a KAPE zip, get an IOC report. Nothing leaves your machine.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230b0e0c'/%3E%3Cpath d='M3 4h10L3 12h10' stroke='%23ffb000' stroke-width='2' fill='none'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/sudo-z.css">
+</head>
+<body>
+<header class="bar">
+  <div class="brand"><span class="glyph">Z</span><span class="name">SUDO-Z</span><span class="sep">//</span><span class="sub">DFIR TRIAGE CONSOLE</span></div>
+  <div class="bar-meta">
+    <span class="tag ok" title="Files are read with the File API and parsed in a Web Worker. No network requests are made with your data.">LOCAL ONLY / NO UPLOAD</span>
+    <span class="tag" id="ver">v1.0.0</span>
+    <span class="clock" id="clock">--:--:-- UTC</span>
+  </div>
+</header>
+
+<main class="grid">
+  <aside class="intake panel">
+    <div class="ph"><span class="code">00</span> INTAKE</div>
+    <label class="drop" id="drop" tabindex="0">
+      <input type="file" id="file" multiple hidden>
+      <span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>
+      <div class="drop-main">DROP ARTIFACTS</div>
+      <div class="drop-sub">single files, many files, or a .zip (KAPE output works)</div>
+      <div class="drop-btn">[ SELECT FILES ]</div>
+    </label>
+    <div class="staged" id="staged"><div class="muted">No files staged.</div></div>
+    <div class="actions">
+      <button id="run" class="btn primary" disabled>EXECUTE ANALYSIS</button>
+      <button id="clear" class="btn" disabled>CLEAR</button>
+    </div>
+    <div class="progress" id="progress" hidden>
+      <div class="pbar"><div class="pfill" id="pfill"></div></div>
+      <div class="plabel" id="plabel">idle</div>
+    </div>
+    <div class="ph mini"><span class="code">--</span> ACCEPTED INPUT</div>
+    <table class="accept">
+      <tr><td>.evtx</td><td>EvtxECmd</td></tr>
+      <tr><td>.pf</td><td>PECmd</td></tr>
+      <tr><td>.lnk</td><td>LECmd</td></tr>
+      <tr><td>*Destinations-ms</td><td>JLECmd</td></tr>
+      <tr><td>SYSTEM SOFTWARE SAM</td><td>RECmd / AppCompatCache</td></tr>
+      <tr><td>NTUSER UsrClass</td><td>RECmd / SBECmd</td></tr>
+      <tr><td>Amcache.hve</td><td>AmcacheParser</td></tr>
+      <tr><td>$MFT $J $Boot</td><td>MFTECmd</td></tr>
+      <tr><td>$I* INFO2</td><td>RBCmd</td></tr>
+      <tr><td>RecentFileCache.bcf</td><td>RecentFileCacheParser</td></tr>
+      <tr><td>History places.sqlite *.db</td><td>SQLECmd</td></tr>
+      <tr><td>ActivitiesCache.db</td><td>WxTCmd</td></tr>
+      <tr><td>u_ex*.log</td><td>iisGeolocate</td></tr>
+      <tr><td>Tasks\* PS history scripts</td><td>Sudo-Z extras</td></tr>
+      <tr><td>anything else</td><td>Hasher + bstrings</td></tr>
+    </table>
+    <p class="fine">Everything is hashed (MD5/SHA1/SHA256). Files no EZ tool accepts are still string-scanned and listed under REJECTED with the reason.</p>
+  </aside>
+
+  <section class="console">
+    <nav class="tabs" id="tabs">
+      <button data-tab="sitrep" class="on"><span>01</span>SITREP</button>
+      <button data-tab="findings"><span>02</span>FINDINGS <b id="n-findings"></b></button>
+      <button data-tab="indicators"><span>03</span>INDICATORS <b id="n-ind"></b></button>
+      <button data-tab="timeline"><span>04</span>TIMELINE <b id="n-tl"></b></button>
+      <button data-tab="artifacts"><span>05</span>ARTIFACTS <b id="n-art"></b></button>
+      <button data-tab="rejected"><span>06</span>REJECTED <b id="n-rej"></b></button>
+      <button data-tab="tools"><span>07</span>TOOLS</button>
+      <div class="exports" id="exports" hidden>
+        <span class="muted">EXPORT</span>
+        <button data-exp="md">REPORT.MD</button>
+        <button data-exp="json">JSON</button>
+        <button data-exp="findings">FINDINGS.CSV</button>
+        <button data-exp="ioc">IOC.CSV</button>
+        <button data-exp="timeline">TIMELINE.CSV</button>
+      </div>
+    </nav>
+    <div class="view" id="view"></div>
+  </section>
+</main>
+
+<footer class="foot">
+  <span>SUDO-Z: one console for the Eric Zimmerman toolset, rebuilt for the browser.</span>
+  <span>Parsers are independent JavaScript reimplementations. Validate critical findings with the original tools.</span>
+</footer>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
