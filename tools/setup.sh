@@ -61,7 +61,11 @@ install_vol() {
   install_vol_python
   say "installing Volatility 3 into $VENV"
   "$VENV/bin/python" -m pip install -q -U pip >/dev/null 2>&1 || true
-  "$VENV/bin/python" -m pip install -U "volatility3[full]" || "$VENV/bin/python" -m pip install -U volatility3
+  if ! "$VENV/bin/python" -m pip install -U "volatility3[full]"; then
+    say "full extras failed to build; installing core Volatility 3 and the extras one by one"
+    "$VENV/bin/python" -m pip install -U volatility3
+    for x in capstone pycryptodome yara-python; do "$VENV/bin/python" -m pip install -q "$x" || say "optional extra $x unavailable on this Python (some plugins lose features)"; done
+  fi
   "$VENV/bin/vol" -h >/dev/null 2>&1 && say "Volatility 3 ready: $("$VENV/bin/vol" -h 2>&1 | grep -oE 'Framework [0-9.]+')"
 }
 

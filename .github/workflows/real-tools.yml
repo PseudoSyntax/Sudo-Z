@@ -46,9 +46,11 @@ jobs:
           Get-Content ez.md | Where-Object { $_ -match '^\|' -or $_ -match 'REQUIRED' } | Add-Content $env:GITHUB_STEP_SUMMARY
           exit $code
       - name: Sudo-Z on the same evidence
+        if: always()
         shell: bash
         run: node cli/sudo-z.mjs "$RUNNER_TEMP/ev/evidence" -o "$RUNNER_TEMP/szout"
       - name: Compare Sudo-Z with the original tools
+        if: always()
         shell: bash
         run: |
           dir=$(python -c "import json,sys;print(json.load(open(sys.argv[1]))['dir'])" "$RUNNER_TEMP/ezjob.json")

@@ -84,7 +84,11 @@ function Install-Vol {
   Say 'installing Volatility 3 into the venv'
   & $vpy -m pip install -q -U pip 2>$null
   & $vpy -m pip install -U 'volatility3[full]'
-  if ($LASTEXITCODE -ne 0) { Say 'full extras failed, installing core Volatility 3' 'Yellow'; & $vpy -m pip install -U volatility3 }
+  if ($LASTEXITCODE -ne 0) {
+    Say 'full extras failed to build; installing core Volatility 3 and the extras one by one' 'Yellow'
+    & $vpy -m pip install -U volatility3
+    foreach ($x in 'capstone', 'pycryptodome', 'yara-python') { & $vpy -m pip install -q $x; if ($LASTEXITCODE -ne 0) { Say "optional extra $x unavailable on this Python (some plugins lose features)" 'Yellow' } }
+  }
   $vol = Join-Path $venv 'Scripts\vol.exe'
   if (Test-Path $vol) { Say "Volatility 3 ready ($((& $vol -h 2>&1 | Select-String 'Framework [0-9.]+').Matches.Value))" 'Green' } else { throw 'Volatility 3 install failed' }
 }

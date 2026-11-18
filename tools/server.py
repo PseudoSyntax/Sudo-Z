@@ -59,6 +59,11 @@ def vol_cmd():
         except Exception: continue
     return None, None
 
+# EZ tools that refuse to run off Windows (verified on Linux CI runners)
+WINDOWS_ONLY = {
+    'SrumECmd': 'Windows-only: needs the Windows ESE libraries. Sudo-Z parses SRUM itself on any OS.',
+    'SumECmd': 'Windows-only: needs the Windows ESE libraries. Sudo-Z reads SUM with its own ESE parser.',
+}
 EZ_TOOLS = ['EvtxECmd', 'PECmd', 'LECmd', 'JLECmd', 'RECmd', 'AmcacheParser', 'AppCompatCacheParser', 'MFTECmd', 'RBCmd', 'SBECmd', 'SrumECmd', 'SumECmd', 'SQLECmd', 'WxTCmd', 'RecentFileCacheParser', 'bstrings']
 
 def ez_tools():
@@ -157,11 +162,14 @@ def ez_plan(root):
     if find('*.pf'): add('PECmd', ['-d', str(r), '-q'], 'prefetch')
     if find('*.lnk'): add('LECmd', ['-d', str(r), '-q'], 'shortcuts')
     if find('*Destinations-ms'): add('JLECmd', ['-d', str(r), '-q'], 'jump lists')
+    # dirty hives: replay .LOG1/.LOG2 when they were collected, otherwise tell the tool to proceed without them (--nl)
+    has_logs = lambda h: any(h.with_name(h.name + ext).exists() for ext in ('.LOG1', '.LOG2', '.LOG', '.log1', '.log2', '.log'))
     if any(find(n) for n in ['NTUSER.DAT', 'SYSTEM', 'SOFTWARE', 'SAM', 'UsrClass.dat']) and 'RECmd' in tools:
         batch = next(Path(tools['RECmd']).parent.rglob('Kroll_Batch.reb'), None) or next(Path(tools['RECmd']).parent.rglob('*.reb'), None)
-        if batch: add('RECmd', ['-d', str(r), '--bn', str(batch), '--nl'], 'registry (batch)')
-    for h in find('Amcache.hve'): add('AmcacheParser', ['-f', str(h), '-i'], 'amcache')
-    for h in find('SYSTEM'): add('AppCompatCacheParser', ['-f', str(h)], 'shimcache')
+        any_logs = bool(find('*.LOG1') or find('*.LOG2'))
+        if batch: add('RECmd', ['-d', str(r), '--bn', str(batch)] + ([] if any_logs else ['--nl']), 'registry (batch)')
+    for h in find('Amcache.hve'): add('AmcacheParser', ['-f', str(h), '-i'] + ([] if has_logs(h) else ['--nl']), 'amcache')
+    for h in find('SYSTEM'): add('AppCompatCacheParser', ['-f', str(h)] + ([] if has_logs(h) else ['--nl']), 'shimcache')
     for m in find('$MFT'): add('MFTECmd', ['-f', str(m)], '$MFT')
     for j in find('$J'): add('MFTECmd', ['-f', str(j)], '$J')
     if find('$I*'): add('RBCmd', ['-d', str(r), '-q'], 'recycle bin')
@@ -179,6 +187,8 @@ def run_ez(job, root):
     tools = ez_tools()
     for tool, args, label in plan:
         job['current'] = f'{tool} ({label})'
+        if not IS_WIN and tool in WINDOWS_ONLY:
+            job['results'].append({'tool': tool, 'label': label, 'ok': False, 'skipped': True, 'error': WINDOWS_ONLY[tool]}); job['done'] += 1; continue
         out = Path(job['dir']) / tool
         out.mkdir(exist_ok=True)
         cmd = ez_cmd(tools[tool])
