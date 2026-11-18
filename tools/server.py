@@ -4,6 +4,8 @@
 Serves the console on http://localhost and adds what a browser cannot do:
   * Volatility 3 on memory images (by path, so multi-GB images never pass through the browser)
   * the original Eric Zimmerman tools on a folder (KAPE / Velociraptor output), if installed
+  * KAPE triage collection (Windows, elevated) from a live drive, a folder or a mounted VHD/VHDX
+  * random-access reads of disk images by path, so the console can triage multi-GB images in place
 
 Security: binds 127.0.0.1 only, rejects requests whose Host header is not
 localhost, and requires an X-Sudo-Z header on API calls (a custom header
@@ -12,10 +14,10 @@ so other websites open in your browser cannot drive it.
 
 Standard library only. Usage: python3 tools/server.py [port] [--no-browser]
 """
-import json, mimetypes, os, platform, re, shutil, subprocess, sys, threading, time, uuid, webbrowser
+import base64, json, mimetypes, os, platform, re, shutil, subprocess, sys, threading, time, uuid, webbrowser
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse, unquote, parse_qs
 
 APP = Path(__file__).resolve().parent.parent          # .../app
 HOME = APP.parent                                      # install dir (holds venv/, ez/, runs/)
@@ -98,6 +100,32 @@ def ez_cmd(path):
     d = dotnet_path()
     return [d, path] if d else None
 
+def kape_path():
+    if not IS_WIN: return None
+    cands = [os.environ.get('SUDOZ_KAPE', ''), str(HOME / 'kape' / 'kape.exe'), r'C:\KAPE\kape.exe', r'C:\Tools\KAPE\kape.exe', r'C:\Tools\kape\kape.exe',
+             os.path.expandvars(r'%USERPROFILE%\Downloads\KAPE\kape.exe'), os.path.expandvars(r'%USERPROFILE%\Desktop\KAPE\kape.exe')]
+    for c in cands:
+        if c and os.path.isfile(c): return c
+    k = HOME / 'kape'
+    if k.exists():
+        for p in k.rglob('kape.exe'): return str(p)
+    return None
+
+def is_admin():
+    if not IS_WIN: return os.geteuid() == 0 if hasattr(os, 'geteuid') else False
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception: return False
+
+def kape_targets(kp):
+    """Compound target names shipped with this KAPE copy (for the picker)."""
+    try:
+        root = Path(kp).parent / 'Targets'
+        names = sorted({p.stem for p in root.rglob('*.tkape') if p.parent.name.lower() == 'compound' or p.stem.startswith('!')})
+        return names[:200]
+    except Exception: return []
+
 CAPS = {}
 def detect_caps():
     vc, vv = vol_cmd()
@@ -107,6 +135,8 @@ def detect_caps():
         'vol3': {'available': bool(vc), 'version': vv},
         'ez': {'tools': sorted(ez_tools().keys()), 'dotnet': bool(dotnet_path())},
         'runs': str(RUNS),
+        'kape': {'available': bool(kape_path()), 'path': kape_path(), 'windows': IS_WIN, 'admin': is_admin(), 'targets': kape_targets(kape_path()) if kape_path() else []},
+        'images': True,
     })
     CAPS['_volcmd'] = vc
 
@@ -148,7 +178,7 @@ def run_vol(job, image, plugins):
                 job['results'].append({'plugin': plugin, 'ok': False, 'error': str(e)}); ok = True; break
         if not ok: job['results'].append({'plugin': name, 'ok': False, 'error': 'plugin not available in this Volatility version'})
         job['done'] += 1
-    job['status'] = 'done'; job['current'] = ''
+    job['status'] = 'done'; job['current'] = ''; job['finished'] = time.time()
 
 def ez_plan(root):
     """KAPE !EZParser style: which tool runs on what inside a folder."""
@@ -207,6 +237,86 @@ def run_ez(job, root):
         job['done'] += 1
     job['status'] = 'done'; job['current'] = ''
 
+# ------------------------------------------------------------------ KAPE
+MOUNTABLE = ('.vhd', '.vhdx', '.iso')
+def psq(v): return "'" + str(v).replace("'", "''") + "'"
+
+def run_kape(job, source, target, modules, vss):
+    d = Path(job['dir']); tout = d / 'tout'; mout = d / 'mout'; log = d / 'kape.log'; flag = d / 'done.flag'
+    kp = kape_path(); is_img = os.path.isfile(source)
+    mod = f"--module '!EZParser' --mdest {psq(mout)} --mef csv" if modules else ''
+    ps = f"""$ErrorActionPreference = 'Continue'
+$log = {psq(log)}
+function L($m) {{ Add-Content -LiteralPath $log -Value $m }}
+$img = {psq(source) if is_img else '$null'}
+$letters = @(); $mounted = $false
+try {{
+  if ($img) {{
+    L "mounting $img read-only"
+    Mount-DiskImage -ImagePath $img -Access ReadOnly | Out-Null; $mounted = $true; Start-Sleep -Seconds 3
+    $letters = @(Get-DiskImage -ImagePath $img | Get-Disk | Get-Partition | Where-Object {{ $_.DriveLetter }} | ForEach-Object {{ "$($_.DriveLetter):" }})
+    if (-not $letters) {{ L 'ERROR the image mounted but Windows gave it no drive letter (BitLocker, an unknown file system, or only hidden partitions)' }}
+  }} else {{ $letters = @({psq(source)}) }}
+  foreach ($d in $letters) {{
+    $dest = Join-Path {psq(tout)} ($d.Substring(0,1))
+    L "KAPE $d -> $dest (target {target})"
+    & {psq(kp)} --tsource $d --tdest $dest --target {psq(target)} {'--vss' if vss else ''} {mod} 2>&1 | ForEach-Object {{ Add-Content -LiteralPath $log -Value $_ }}
+    L "KAPE exit code $LASTEXITCODE"
+  }}
+}} catch {{ L ("ERROR " + $_) }}
+finally {{
+  if ($mounted) {{ Dismount-DiskImage -ImagePath $img | Out-Null; L 'image dismounted' }}
+  Set-Content -LiteralPath {psq(flag)} -Value 'done'
+}}
+"""
+    script = d / 'kape-job.ps1'; script.write_text(ps, encoding='utf-8-sig')
+    log.write_text('', encoding='utf-8')
+    base = ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass']
+    if is_admin():
+        cmd = base + ['-File', str(script)]
+    else:  # ask for elevation; the UAC prompt appears on this machine
+        jlog(job, 'requesting administrator rights (UAC prompt)')
+        elev = f"Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList ('-NoProfile -ExecutionPolicy Bypass -File \"' + {psq(script)} + '\"')"
+        cmd = base + ['-EncodedCommand', base64.b64encode(elev.encode('utf-16-le')).decode()]
+    job['current'] = 'starting KAPE'
+    try: proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, text=True)
+    except Exception as e:
+        job['status'] = 'error'; job['error'] = str(e); return
+    seen = 0
+    while True:
+        done = proc.poll() is not None
+        try:
+            lines = log.read_text(encoding='utf-8', errors='replace').splitlines()
+            for ln in lines[seen:]:
+                if ln.strip(): jlog(job, ln.strip()); job['current'] = ln.strip()[:160]
+            seen = len(lines)
+        except OSError: pass
+        if done: break
+        time.sleep(1)
+    out = (proc.stdout.read() if proc.stdout else '') or ''
+    if not flag.exists():
+        job['status'] = 'error'; job['error'] = ('Elevation was declined or PowerShell failed. ' + out.strip())[-600:]; job['current'] = ''; return
+    files = [x for x in tout.rglob('*') if x.is_file()] if tout.exists() else []
+    job['results'] = [{'file': str(x.relative_to(d)).replace(os.sep, '/'), 'size': x.stat().st_size} for x in files]
+    job['modules'] = [str(x.relative_to(d)).replace(os.sep, '/') for x in mout.rglob('*.csv')] if mout.exists() else []
+    job['total'] = job['done'] = len(files)
+    job['status'] = 'done' if files else 'error'
+    if not files: job['error'] = 'KAPE finished without collecting any files. See the log.'
+    job['current'] = ''
+
+# ------------------------------------------------------------------ disk images by path
+def image_segments(path):
+    """x.E01 -> x.E01, x.E02 ... ; x.001 -> x.001, x.002 ..."""
+    p = Path(path); m = re.match(r'^(.*\.)(E|Ex|e|ex)?(\d{2,3})$', p.name)
+    if not m: return [p]
+    prefix, letter, num = m.group(1), m.group(2) or '', m.group(3)
+    segs = []
+    for i in range(int(num), int(num) + 10000):
+        q = p.with_name(f'{prefix}{letter}{str(i).zfill(len(num))}')
+        if not q.exists(): break
+        segs.append(q)
+    return segs or [p]
+
 # ------------------------------------------------------------------ HTTP
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw): super().__init__(*a, directory=str(APP), **kw)
@@ -233,6 +343,18 @@ class Handler(SimpleHTTPRequestHandler):
         if u.path.startswith('/api/'):
             if not self.api_guard(): return
             if u.path == '/api/caps': return self.send_json({k: v for k, v in CAPS.items() if not k.startswith('_')})
+            if u.path == '/api/jobs':
+                with LOCK: lst = [{**{k: v for k, v in j.items() if k not in ('log', 'results')}, 'log_tail': j['log'][-3:], 'count': len(j['results'])} for j in JOBS.values()]
+                return self.send_json(sorted(lst, key=lambda j: -j['started']))
+            if u.path in ('/api/image/stat', '/api/image/read'):
+                q = parse_qs(u.query); path = os.path.expanduser(unquote(q.get('path', [''])[0]).strip().strip('"'))
+                if not os.path.isfile(path): return self.send_json({'error': f'image not found: {path}'}, 404)
+                if u.path == '/api/image/stat':
+                    return self.send_json({'segments': [{'path': str(x), 'name': x.name, 'size': x.stat().st_size} for x in image_segments(path)]})
+                off = int(q.get('off', ['0'])[0]); ln = min(int(q.get('len', ['0'])[0]), 64 * 1024 * 1024)
+                with open(path, 'rb') as fh:
+                    fh.seek(off); data = fh.read(max(0, ln))
+                self.send_response(200); self.send_header('Content-Type', 'application/octet-stream'); self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data); return
             m = re.match(r'^/api/job/([0-9a-f]+)$', u.path)
             if m:
                 j = JOBS.get(m.group(1))
@@ -243,8 +365,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if not j: return self.send_json({'error': 'no such job'}, 404)
                 p = (Path(j['dir']) / unquote(m.group(2))).resolve()
                 if not str(p).startswith(str(Path(j['dir']).resolve())) or not p.is_file(): return self.send_json({'error': 'not found'}, 404)
-                data = p.read_bytes()
-                self.send_response(200); self.send_header('Content-Type', 'application/octet-stream'); self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data); return
+                self.send_response(200); self.send_header('Content-Type', 'application/octet-stream'); self.send_header('Content-Length', str(p.stat().st_size)); self.end_headers()
+                with open(p, 'rb') as fh: shutil.copyfileobj(fh, self.wfile, 1024 * 1024)
+                return
             return self.send_json({'error': 'unknown endpoint'}, 404)
         return super().do_GET()
     def do_POST(self):
@@ -259,15 +382,28 @@ class Handler(SimpleHTTPRequestHandler):
             if not os.path.isfile(img): return self.send_json({'error': f'memory image not found: {img}'}, 400)
             plugins = VOL_PLUGINS
             if body.get('plugins'): plugins = [[p] for p in body['plugins'] if re.match(r'^[a-z]+(\.[a-z0-9_]+)+$', p)]
-            job = new_job('vol3', len(plugins)); job['image'] = img
+            job = new_job('vol3', len(plugins)); job['image'] = img; job['source'] = img
             threading.Thread(target=run_vol, args=(job, img, plugins), daemon=True).start()
             return self.send_json(job)
         if u.path == '/api/ez/run':
             root = os.path.expanduser(str(body.get('path', '')).strip().strip('"'))
             if not os.path.isdir(root): return self.send_json({'error': f'folder not found: {root}'}, 400)
             if not CAPS['ez']['tools']: return self.send_json({'error': 'Eric Zimmerman tools not installed. Run: sudo-z setup ez'}, 400)
-            job = new_job('ez', 0); job['path'] = root
+            job = new_job('ez', 0); job['path'] = root; job['source'] = root
             threading.Thread(target=run_ez, args=(job, root), daemon=True).start()
+            return self.send_json(job)
+        if u.path == '/api/kape/run':
+            if not IS_WIN: return self.send_json({'error': 'KAPE is a Windows program. On this OS, collect with KAPE on the Windows host (or drop the disk image into the console, which reads E01/VHD/VHDX/raw itself).'}, 400)
+            if not kape_path(): return self.send_json({'error': 'KAPE not found. Download it from Kroll (free, registration required), unzip it to ' + str(HOME / 'kape') + ' or C:\\KAPE, then press RESCAN.'}, 400)
+            src = os.path.expanduser(str(body.get('source', '')).strip().strip('"'))
+            target = str(body.get('target') or '!SANS_Triage').strip()
+            if not re.match(r'^[!\w.,\- ]{1,200}$', target): return self.send_json({'error': 'bad target name'}, 400)
+            if re.match(r'^[A-Za-z]:\\?$', src): src = src[0].upper() + ':'
+            elif os.path.isfile(src):
+                if not src.lower().endswith(MOUNTABLE): return self.send_json({'error': 'Windows can only mount VHD, VHDX and ISO for KAPE. For E01, raw or QCOW2 use ANALYSE IMAGE instead: Sudo-Z reads those directly.'}, 400)
+            elif not os.path.isdir(src): return self.send_json({'error': f'source not found: {src}'}, 400)
+            job = new_job('kape', 0); job['source'] = src; job['target'] = target
+            threading.Thread(target=run_kape, args=(job, src, target, bool(body.get('modules')), bool(body.get('vss'))), daemon=True).start()
             return self.send_json(job)
         if u.path == '/api/rescan':
             detect_caps(); return self.send_json({k: v for k, v in CAPS.items() if not k.startswith('_')})

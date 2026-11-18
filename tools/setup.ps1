@@ -93,6 +93,28 @@ function Install-Vol {
   if (Test-Path $vol) { Say "Volatility 3 ready ($((& $vol -h 2>&1 | Select-String 'Framework [0-9.]+').Matches.Value))" 'Green' } else { throw 'Volatility 3 install failed' }
 }
 
+function Find-Kape {
+  $c = @($env:SUDOZ_KAPE, (Join-Path $Dir 'kape\kape.exe'), 'C:\KAPE\kape.exe', 'C:\Tools\KAPE\kape.exe', "$env:USERPROFILE\Downloads\KAPE\kape.exe") | Where-Object { $_ -and (Test-Path $_) }
+  if ($c) { return $c[0] }
+  $k = Get-ChildItem (Join-Path $Dir 'kape') -Recurse -Filter 'kape.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($k) { return $k.FullName }
+  return $null
+}
+function Install-Kape {
+  # KAPE is free but licensed by Kroll behind a registration form, so it cannot be downloaded silently.
+  $k = Find-Kape
+  if (-not $k) {
+    $dest = Join-Path $Dir 'kape'
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    Say "KAPE not found. Opening the Kroll download page. Unzip the KAPE folder into $dest (so $dest\kape.exe exists) or C:\KAPE, then run: sudo-z setup kape" Yellow
+    Start-Process 'https://www.kroll.com/en/insights/publications/cyber/kroll-artifact-parser-extractor-kape'
+    return
+  }
+  Say "KAPE found: $k" Green
+  Say 'updating KAPE targets and modules from GitHub (kape --sync)'
+  Push-Location (Split-Path $k); try { & $k --sync | Out-Host } finally { Pop-Location }
+}
+
 function Show-Status {
   $private = Join-Path $dotnetDir 'dotnet.exe'
   $core = (Test-Runtime $private 'NETCore') -or (Test-Runtime 'dotnet' 'NETCore')
@@ -101,12 +123,15 @@ function Show-Status {
   Write-Host ("  .NET 10 runtime : {0}" -f $(if ($core) { 'yes' } else { 'no  (sudo-z setup dotnet)' }))
   Write-Host ("  EZ tools        : {0}" -f $(if ($ez) { "$ez executables in $ezDir" } else { 'no  (sudo-z setup ez)' }))
   Write-Host ("  Volatility 3    : {0}" -f $(if ($vol) { 'yes' } else { 'no  (sudo-z setup vol)' }))
+  $k = Find-Kape
+  Write-Host ("  KAPE            : {0}" -f $(if ($k) { $k } else { 'no  (sudo-z setup kape)' }))
 }
 
 switch ($What) {
   'dotnet' { Install-DotNet }
   'ez' { Install-EZ }
   'vol' { Install-Vol }
+  'kape' { Install-Kape }
   'status' { Show-Status }
   'all' {
     $failed = @()

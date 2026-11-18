@@ -73,7 +73,7 @@ status() {
   if have_net10 "$DOTNET_DIR/dotnet" || have_net10 dotnet; then n=yes; else n="no  (sudo-z setup dotnet)"; fi
   c=$( { find "$EZ_DIR" \( -name '*.exe' -o -name '*.dll' \) 2>/dev/null || true; } | wc -l | tr -d ' ')
   [ -x "$VENV/bin/vol" ] && v=yes || v="no  (sudo-z setup vol)"
-  echo "  .NET 10 runtime : $n"; echo "  EZ tools        : ${c} files in $EZ_DIR"; echo "  Volatility 3    : $v"
+  echo "  .NET 10 runtime : $n"; echo "  EZ tools        : ${c} files in $EZ_DIR"; echo "  Volatility 3    : $v"; echo "  KAPE            : Windows only (disk images are read by the console itself)"
 }
 
 case "$WHAT" in
@@ -81,6 +81,7 @@ case "$WHAT" in
   ez) install_ez ;;
   vol) install_vol ;;
   status) status ;;
+  kape) say "KAPE is a Windows program. On this OS the console reads disk images (E01, VHD, VHDX, raw, QCOW2) itself: use ANALYSE IMAGE." ;;
   all) rc=0; install_ez || { say "EZ tools step failed"; rc=1; }; install_vol || { say "Volatility 3 step failed"; rc=1; }; status; exit $rc ;;
-  *) echo "unknown setup target '$WHAT' (use all, dotnet, ez, vol, status)" >&2; exit 1 ;;
+  *) echo "unknown setup target '$WHAT' (use all, dotnet, ez, vol, kape, status)" >&2; exit 1 ;;
 esac

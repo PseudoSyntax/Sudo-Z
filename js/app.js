@@ -44,15 +44,15 @@ drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' '
 input.addEventListener('change', () => { stage([...input.files].map((f) => ({ file: f, name: f.webkitRelativePath || f.name }))); input.value = ''; });
 
 function stage(list) {
-  for (const x of list) if (!S.staged.some((s) => s.name === x.name && s.file.size === x.file.size)) S.staged.push(x);
+  for (const x of list) { x.size = x.size ?? x.file.size; if (!S.staged.some((s) => s.name === x.name && s.size === x.size)) S.staged.push(x); }
   renderStaged();
 }
 function renderStaged() {
   const el = $('#staged');
   if (!S.staged.length) el.innerHTML = '<div class="muted">No files staged.</div>';
   else {
-    const tot = S.staged.reduce((n, s) => n + s.file.size, 0);
-    el.innerHTML = S.staged.map((s) => `<div class="f"><span title="${esc(s.name)}">${esc(s.name)}</span><span>${fmtSize(s.file.size)}</span></div>`).join('') + `<div class="f" style="border-top:1px solid var(--line);margin-top:4px;padding-top:2px"><span class="muted">${S.staged.length} file(s)</span><span>${fmtSize(tot)}</span></div>`;
+    const tot = S.staged.reduce((n, s) => n + s.size, 0);
+    el.innerHTML = S.staged.map((s) => `<div class="f"><span title="${esc(s.name)}">${esc(s.name)}</span><span>${s.http ? 'IN PLACE ' : ''}${fmtSize(s.size)}</span></div>`).join('') + `<div class="f" style="border-top:1px solid var(--line);margin-top:4px;padding-top:2px"><span class="muted">${S.staged.length} file(s)</span><span>${fmtSize(tot)}</span></div>`;
   }
   $('#run').disabled = !S.staged.length; $('#clear').disabled = !S.staged.length;
 }
@@ -62,7 +62,7 @@ $('#run').addEventListener('click', async () => {
   const btn = $('#run'); btn.disabled = true; $('#clear').disabled = true;
   $('#progress').hidden = false; setProg(0, 'reading files');
   const files = [];
-  for (const s of S.staged) files.push({ name: s.name, buf: await s.file.arrayBuffer() });
+  for (const s of S.staged) files.push(s.http ? { name: s.name, http: s.http } : { name: s.name, file: s.file }); // the worker reads them (disk images lazily)
   let worker;
   try { worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' }); }
   catch { worker = null; }
@@ -75,12 +75,16 @@ $('#run').addEventListener('click', async () => {
       else if (m.type === 'error') { setProg(0, 'ERROR: ' + m.message); console.error(m.stack); btn.disabled = false; worker.terminate(); }
     };
     worker.onerror = async (e) => { console.warn('worker failed, running on main thread', e); worker.terminate(); await mainThread(files, done); };
-    worker.postMessage({ files }, files.map((f) => f.buf));
+    worker.postMessage({ files });
   } else await mainThread(files, done);
 });
 async function mainThread(files, done) {
   const { analyze } = await import('./engine.js');
-  try { done(await analyze(files.map((f) => ({ name: f.name, data: new Uint8Array(f.buf) })), { onProgress: setProg })); }
+  const { fromBlob } = await import('./image/source.js');
+  const inputs = [];
+  const { fromHttp } = await import('./image/source.js');
+  for (const f of files) if (f.http) inputs.push({ name: f.name, src: fromHttp(`/api/image/read?path=${encodeURIComponent(f.http.path)}`, f.http.size, f.name, { 'X-Sudo-Z': '1' }) }); else inputs.push(/\.(e01|e\d\d|raw|dd|img|\d{3}|vhdx?|qcow2?)$/i.test(f.name) || f.file.size > 512 * 1024 ** 2 ? { name: f.name, src: fromBlob(f.file, f.name) } : { name: f.name, data: new Uint8Array(await f.file.arrayBuffer()) });
+  try { done(await analyze(inputs, { onProgress: setProg })); }
   catch (e) { setProg(0, 'ERROR: ' + e.message); $('#run').disabled = false; }
 }
 function setProg(p, label) { $('#pfill').style.width = Math.round(p * 100) + '%'; $('#plabel').textContent = label || ''; }
@@ -354,7 +358,7 @@ function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTi
 render();
 
 // ---------------------------------------------------------------- home install: local engine (Volatility 3, original EZ tools)
-const LOCAL = { caps: null };
+const LOCAL = { caps: null, mine: new Set(), loaded: new Set(), auto: true, flash: '', timer: 0 };
 const api = async (path, body) => {
   const r = await fetch(path, { method: body ? 'POST' : 'GET', headers: { 'X-Sudo-Z': '1', ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
@@ -367,55 +371,123 @@ async function initLocal() {
     if (!/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) throw new Error('hosted');
     LOCAL.caps = await api('/api/caps');
   } catch {
-    host.innerHTML = `<div class="localbox"><div class="ph"><span class="code">00B</span> HOME-ONLY TOOLS</div><div class="lb hint">Memory analysis with <b style="color:var(--amber)">Volatility 3</b> and running the <b style="color:var(--amber)">original EZ tools</b> need the home install, because a browser cannot run Python or Windows programs. Install with one command (see README), run <code>sudo-z setup</code>, then <code>sudo-z</code>.<br><br>Here you can still drop Volatility 3 JSON output (<code>vol -r json ... &gt; windows.pslist.json</code>).</div></div>`;
+    host.innerHTML = `<div class="localbox"><div class="ph"><span class="code">00B</span> HOME-ONLY TOOLS</div><div class="lb hint">Memory analysis with <b style="color:var(--amber)">Volatility 3</b> and running the <b style="color:var(--amber)">original EZ tools</b> need the home install, because a browser cannot run Python or Windows programs. Install with one command (see README), run <code>sudo-z setup</code>, then <code>sudo-z</code>.<br><br>Here you can still drop Volatility 3 JSON output (<code>vol -r json ... &gt; windows.pslist.json</code>).<br><br><b style="color:var(--amber)">Disk images</b> (E01, VHD, VHDX, raw/dd, QCOW2) work here too: drop them in and the triage files are pulled out of each NTFS volume without uploading or loading the whole image. Running <b style="color:var(--amber)">KAPE</b> itself needs the home install on Windows.</div></div>`;
     return;
   }
   $('#mode').textContent = 'HOME ENGINE'; $('#mode').classList.add('home');
   renderLocal();
 }
+const KAPE_DEFAULT_TARGETS = ['!SANS_Triage', 'KapeTriage', '!BasicCollection', 'EventLogs', 'RegistryHives', 'FileSystem'];
 function renderLocal() {
-  const c = LOCAL.caps; const v = c.vol3; const ez = c.ez;
+  const c = LOCAL.caps; const v = c.vol3; const ez = c.ez; const k = c.kape || { windows: false };
+  const targets = [...new Set([...KAPE_DEFAULT_TARGETS, ...(k.targets || [])])];
+  const kOk = k.windows && k.available;
   $('#local').innerHTML = `<div class="localbox"><div class="ph"><span class="code">00B</span> LOCAL ENGINE</div><div class="lb">
     <div class="cap"><span>Volatility 3</span><span class="${v.available ? 'ok' : 'no'}">${v.available ? 'v' + esc(v.version) : 'not installed'}</span></div>
     <div class="cap"><span>Original EZ tools</span><span class="${ez.tools.length ? 'ok' : 'no'}">${ez.tools.length ? ez.tools.length + ' found' : 'not installed'}</span></div>
+    <div class="cap"><span>KAPE</span><span class="${kOk ? 'ok' : 'no'}">${!k.windows ? 'Windows only' : k.available ? (k.admin ? 'ready (admin)' : 'ready (asks for admin)') : 'not found'}</span></div>
+    <div class="cap"><span>Disk images</span><span class="ok">E01 VHD VHDX raw QCOW2</span></div>
+
+    <div class="sec">DISK IMAGE</div>
+    <input type="text" id="imgPath" placeholder="image path, e.g. D:\\case\\disk.E01">
+    <button class="btn" id="runImg">ANALYSE IMAGE</button>
+    <div class="hint">Read in place, never copied. Pulls the KAPE-style triage set out of every NTFS volume. E01 segments next to it are picked up.</div>
+
+    <div class="sec">KAPE COLLECTION</div>
+    <input type="text" id="kapeSrc" placeholder="C:  or  E:\\mounted  or  D:\\case\\disk.vhdx" ${kOk ? '' : 'disabled'}>
+    <select id="kapeTarget" ${kOk ? '' : 'disabled'}>${targets.map((t) => `<option>${esc(t)}</option>`).join('')}</select>
+    <label class="chk"><input type="checkbox" id="kapeMod" ${kOk ? '' : 'disabled'}> also run !EZParser modules (CSV for Timeline Explorer)</label>
+    <label class="chk"><input type="checkbox" id="kapeVss" ${kOk ? '' : 'disabled'}> include volume shadow copies</label>
+    <button class="btn" id="runKape" ${kOk ? '' : 'disabled'}>RUN KAPE</button>
+    <div class="hint">${!k.windows ? 'KAPE runs on Windows. Here, use ANALYSE IMAGE, or drop KAPE output collected elsewhere.' : k.available ? 'Runs in the background. VHD/VHDX are mounted read-only first. Results load into the console when it finishes.' : `Download KAPE from Kroll (free, registration required) and unzip it to <code>${esc(c.runs.replace(/runs$/, 'kape'))}</code> or <code>C:\\KAPE</code>, then <a href="#" id="rescan">RESCAN</a>.`}</div>
+
+    <div class="sec">MEMORY IMAGE</div>
     <input type="text" id="memPath" placeholder="memory image path, e.g. D:\\case\\mem.raw" ${v.available ? '' : 'disabled'}>
     <button class="btn" id="runVol" ${v.available ? '' : 'disabled'}>RUN VOLATILITY 3</button>
     ${v.available ? '' : '<div class="hint">Install: <code>sudo-z setup vol</code>, then restart sudo-z.</div>'}
+
+    <div class="sec">ORIGINAL EZ TOOLS</div>
     <input type="text" id="ezPath" placeholder="artifact folder (KAPE / Velociraptor output)" ${ez.tools.length ? '' : 'disabled'}>
     <button class="btn" id="runEz" ${ez.tools.length ? '' : 'disabled'}>RUN ORIGINAL EZ TOOLS</button>
     ${ez.tools.length ? '' : `<div class="hint">Install: <code>sudo-z setup ez</code>${c.os === 'Windows' ? '' : ' (needs pwsh + .NET 10 off Windows)'}.</div>`}
-    <div class="job" id="job"></div>
-    <div class="hint">Images and folders are read in place by the local server; nothing is copied into the browser. Outputs: ${esc(c.runs)}</div>
+
+    <div class="sec">BACKGROUND JOBS <label class="chk" style="float:right;margin:0"><input type="checkbox" id="autoLoad" ${LOCAL.auto ? 'checked' : ''}> auto-load</label></div>
+    <div class="jobs" id="jobs"><div class="muted">No jobs yet.</div></div>
+    <div class="hint">Jobs keep running if you close this tab. Outputs: ${esc(c.runs)}</div>
   </div></div>`;
+  $('#runImg').addEventListener('click', () => analyseImagePath($('#imgPath').value));
+  $('#runKape')?.addEventListener('click', () => startJob('kape', { source: $('#kapeSrc').value, target: $('#kapeTarget').value, modules: $('#kapeMod').checked, vss: $('#kapeVss').checked }));
   $('#runVol')?.addEventListener('click', () => startJob('vol3', { image: $('#memPath').value }));
   $('#runEz')?.addEventListener('click', () => startJob('ez', { path: $('#ezPath').value }));
+  $('#autoLoad').addEventListener('change', (e) => { LOCAL.auto = e.target.checked; });
+  $('#rescan')?.addEventListener('click', async (e) => { e.preventDefault(); LOCAL.caps = await api('/api/rescan', {}); renderLocal(); });
+  pollJobs();
 }
+
+const ENDPOINT = { vol3: '/api/vol3/run', ez: '/api/ez/run', kape: '/api/kape/run' };
 async function startJob(kind, body) {
-  const el = $('#job');
-  el.innerHTML = '<div>starting…</div>';
-  let job;
-  try { job = await api(kind === 'vol3' ? '/api/vol3/run' : '/api/ez/run', body); }
-  catch (e) { el.innerHTML = `<div class="bad">${esc(e.message)}</div>`; return; }
-  const poll = async () => {
-    try { job = await api(`/api/job/${job.id}`); } catch (e) { el.innerHTML = `<div class="bad">${esc(e.message)}</div>`; return; }
-    const rows = job.results.map((r) => `<div class="r"><span>${esc(r.plugin || r.tool)}${r.label ? ' (' + esc(r.label) + ')' : ''}</span><span class="${r.ok ? 'ok' : 'bad'}" title="${esc(r.error || '')}">${r.ok ? 'OK' : 'FAIL'}</span></div>`).join('');
-    el.innerHTML = `<div>${job.status === 'done' ? 'DONE' : 'RUNNING'} ${job.done}/${job.total || '?'} ${job.current ? ':: ' + esc(job.current) : ''}</div>${rows}`;
-    if (job.status !== 'done') return setTimeout(poll, 1500);
-    if (kind === 'vol3') {
-      const files = [];
-      for (const r of job.results) if (r.file) {
-        const res = await fetch(`/api/job/${job.id}/file/${encodeURIComponent(r.file)}`, { headers: { 'X-Sudo-Z': '1' } });
-        if (res.ok) { const buf = await res.arrayBuffer(); if (buf.byteLength > 4) files.push({ file: new File([buf], r.file), name: `memory/${r.file}` }); }
-      }
-      el.insertAdjacentHTML('beforeend', `<div class="ok">${files.length} plugin outputs staged for analysis</div>`);
-      stage(files);
-      if (files.length) $('#run').click();
-    } else {
-      const csvs = job.results.flatMap((r) => (r.files || []).map((f) => f));
-      el.insertAdjacentHTML('beforeend', `<div>${csvs.length} CSV files written (open in Timeline Explorer)</div><button class="btn" id="openOut">OPEN OUTPUT FOLDER</button>`);
-      $('#openOut').addEventListener('click', () => api('/api/open', { job: job.id }).catch((e) => el.insertAdjacentHTML('beforeend', `<div class="bad">${esc(e.message)}</div>`)));
+  try { const j = await api(ENDPOINT[kind], body); LOCAL.mine.add(j.id); LOCAL.flash = ''; }
+  catch (e) { LOCAL.flash = e.message; }
+  pollJobs();
+}
+
+/** Disk image by path: read in place through the local server, analysed in the worker like a dropped file. */
+async function analyseImagePath(path) {
+  path = path.trim().replace(/^"|"$/g, '');
+  if (!path) return;
+  try {
+    const st = await api(`/api/image/stat?path=${encodeURIComponent(path)}`);
+    stage(st.segments.map((g) => ({ name: g.name, size: g.size, http: { path: g.path, size: g.size } })));
+    LOCAL.flash = `${st.segments.length} image segment(s) staged`;
+    pollJobs();
+    $('#run').click();
+  } catch (e) { LOCAL.flash = e.message; pollJobs(); }
+}
+
+const ago = (t) => { const s = Math.max(0, Math.round(Date.now() / 1000 - t)); return s < 90 ? s + 's' : s < 5400 ? Math.round(s / 60) + 'm' : Math.round(s / 3600) + 'h'; };
+async function pollJobs() {
+  clearTimeout(LOCAL.timer);
+  const el = $('#jobs'); if (!el) return;
+  let jobs = [];
+  try { jobs = await api('/api/jobs'); } catch (e) { el.innerHTML = `<div class="bad">${esc(e.message)}</div>`; return; }
+  el.innerHTML = (LOCAL.flash ? `<div class="flash">${esc(LOCAL.flash)}</div>` : '') + (jobs.length ? jobs.slice(0, 12).map((j) => {
+    const src = String(j.source || '').split(/[\\/]/).filter(Boolean).pop() || j.source || '';
+    const st = j.status === 'running' ? 'RUN' : j.status === 'done' ? 'DONE' : 'FAIL';
+    const pct = j.total ? Math.round((j.done / j.total) * 100) : null;
+    const loadable = j.status === 'done' && (j.kind === 'vol3' || j.kind === 'kape');
+    return `<div class="jb ${j.status}"><div class="r"><span><b>${esc(j.kind.toUpperCase())}</b> ${esc(src)}</span><span class="st">${st}${j.status === 'running' && pct != null ? ' ' + pct + '%' : ''} · ${ago(j.started)}</span></div>
+      ${j.status === 'running' ? `<div class="bar"><span style="width:${pct ?? 30}%" class="${pct == null ? 'ind' : ''}"></span></div><div class="cur">${esc(j.current || '')}</div>` : ''}
+      ${j.error ? `<div class="bad">${esc(j.error)}</div>` : ''}
+      ${j.status !== 'running' ? `<div class="acts">${loadable ? `<button class="tog on" data-load="${j.id}">${LOCAL.loaded.has(j.id) ? 'RELOAD' : 'LOAD'} INTO CONSOLE</button>` : ''}<button class="tog" data-open="${j.id}">OPEN FOLDER</button></div>` : ''}</div>`;
+  }).join('') : '<div class="muted">No jobs yet.</div>');
+  el.querySelectorAll('[data-load]').forEach((b) => b.addEventListener('click', () => loadJob(b.dataset.load)));
+  el.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => api('/api/open', { job: b.dataset.open }).catch((e) => { LOCAL.flash = e.message; pollJobs(); })));
+  // auto-load jobs started from this page when they finish
+  for (const j of jobs) if (LOCAL.auto && LOCAL.mine.has(j.id) && j.status === 'done' && !LOCAL.loaded.has(j.id) && (j.kind === 'vol3' || j.kind === 'kape')) loadJob(j.id);
+  if (jobs.some((j) => j.status === 'running')) LOCAL.timer = setTimeout(pollJobs, 1500);
+}
+
+/** Pull a finished job's outputs into the staging list and run the analysis. */
+async function loadJob(id) {
+  if (LOCAL.loading) return; LOCAL.loading = true; LOCAL.loaded.add(id);
+  try {
+    const job = await api(`/api/job/${id}`);
+    const files = []; let skipped = 0;
+    for (const r of job.results) {
+      if (!r.file) continue;
+      if (r.size > 1.5 * 1024 ** 3) { skipped++; continue; }
+      LOCAL.flash = `loading ${job.kind} output ${files.length + 1}/${job.results.length}`; $('#jobs .flash') && ($('#jobs .flash').textContent = LOCAL.flash);
+      const res = await fetch(`/api/job/${id}/file/${r.file.split('/').map(encodeURIComponent).join('/')}`, { headers: { 'X-Sudo-Z': '1' } });
+      if (!res.ok) continue;
+      const blob = await res.blob(); if (blob.size <= 4) continue;
+      const name = job.kind === 'vol3' ? `memory/${r.file}` : `kape/${r.file.replace(/^tout\//, '')}`;
+      files.push({ file: new File([blob], name.split('/').pop()), name });
     }
-  };
-  poll();
+    LOCAL.flash = `${files.length} file(s) from ${job.kind} staged${skipped ? `, ${skipped} over 1.5 GB skipped` : ''}`;
+    stage(files);
+    if (files.length && !$('#run').disabled) $('#run').click();
+  } catch (e) { LOCAL.flash = e.message; }
+  LOCAL.loading = false;
+  pollJobs();
 }
 initLocal();
