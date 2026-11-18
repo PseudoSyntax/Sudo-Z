@@ -9,6 +9,7 @@ out = subprocess.run([vol, '-h'], capture_output=True, text=True).stdout
 names = set(re.findall(r'^\s+((?:windows|linux|mac)\.[A-Za-z0-9_.]+)', out, re.M))
 ver = re.search(r'Framework ([\d.]+)', out)
 print(f'Volatility {ver.group(1) if ver else "?"}: {len(names)} plugins')
+print('  windows plugins: ' + ' '.join(sorted(n for n in names if n.startswith('windows.'))))
 bad = 0
 for alts in groups:
     hit = next((a for a in alts if any(n == a or n.startswith(a + '.') for n in names)), None)
