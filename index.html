@@ -14,7 +14,7 @@
   <div class="bar-meta">
     <span class="tag ok" title="Files are read with the File API and parsed in a Web Worker. No network requests are made with your data.">LOCAL ONLY / NO UPLOAD</span>
     <span class="tag" id="mode">BROWSER MODE</span>
-    <span class="tag" id="ver">v1.3.0</span>
+    <span class="tag" id="ver">v1.4.0</span>
     <span class="clock" id="clock">--:--:-- UTC</span>
   </div>
 </header>
@@ -60,6 +60,9 @@
       <tr><td>Velociraptor collection .zip</td><td>Velociraptor</td></tr>
       <tr><td>u_ex*.log</td><td>iisGeolocate</td></tr>
       <tr><td>Tasks\* PS history scripts</td><td>Sudo-Z extras</td></tr>
+      <tr><td>EZ tool / KAPE module CSVs, Autoruns, Sigcheck, Hayabusa</td><td>Timeline Explorer CSV</td></tr>
+      <tr><td>.exe .dll .sys</td><td>Hasher + signer check</td></tr>
+      <tr><td>E01 VHD(X) raw QCOW2</td><td>Disk image triage</td></tr>
       <tr><td>anything else</td><td>Hasher + bstrings</td></tr>
     </table>
     <p class="fine">Everything is hashed (MD5/SHA1/SHA256). Files no EZ tool accepts are still string-scanned and listed under REJECTED with the reason.</p>
@@ -69,17 +72,19 @@
     <nav class="tabs" id="tabs">
       <button data-tab="sitrep" class="on"><span>01</span>SITREP</button>
       <button data-tab="investigate"><span>02</span>INVESTIGATE <b id="n-leads"></b></button>
-      <button data-tab="findings"><span>03</span>FINDINGS <b id="n-findings"></b></button>
-      <button data-tab="indicators"><span>04</span>INDICATORS <b id="n-ind"></b></button>
-      <button data-tab="timeline"><span>05</span>TIMELINE <b id="n-tl"></b></button>
-      <button data-tab="artifacts"><span>06</span>ARTIFACTS <b id="n-art"></b></button>
-      <button data-tab="rejected"><span>07</span>REJECTED <b id="n-rej"></b></button>
-      <button data-tab="tools"><span>08</span>TOOLS</button>
+      <button data-tab="grid"><span>03</span>GRID <b id="n-prog"></b></button>
+      <button data-tab="findings"><span>04</span>FINDINGS <b id="n-findings"></b></button>
+      <button data-tab="indicators"><span>05</span>INDICATORS <b id="n-ind"></b></button>
+      <button data-tab="timeline"><span>06</span>TIMELINE <b id="n-tl"></b></button>
+      <button data-tab="artifacts"><span>07</span>ARTIFACTS <b id="n-art"></b></button>
+      <button data-tab="rejected"><span>08</span>REJECTED <b id="n-rej"></b></button>
+      <button data-tab="tools"><span>09</span>TOOLS</button>
       <div class="exports" id="exports" hidden>
         <span class="muted">EXPORT</span>
         <button data-exp="md">REPORT.MD</button>
         <button data-exp="json">JSON</button>
         <button data-exp="leads">LEADS.CSV</button>
+        <button data-exp="programs">PROGRAMS.CSV</button>
         <button data-exp="findings">FINDINGS.CSV</button>
         <button data-exp="ioc">IOC.CSV</button>
         <button data-exp="timeline">TIMELINE.CSV</button>

@@ -117,7 +117,7 @@ Drop an E01, VHD, VHDX, raw/dd (single or split `.001`), or QCOW2 image on the w
 1. The container is opened: E01 chunks are inflated, VHD/VHDX block tables and QCOW2 cluster tables are followed, and split segments are joined.
 2. MBR (including extended partitions) and GPT partition tables are read and every volume's file system is identified.
 3. Each NTFS volume is opened from its boot sector. The full $MFT is read, records are rebuilt into paths, and file contents are read from their data runs, including sparse and LZNT1 compressed files and named streams like `$UsnJrnl:$J`.
-4. A KAPE-style target set is pulled out: $MFT, $J, $Boot, registry hives with their .LOG1/.LOG2, user NTUSER.DAT and UsrClass.dat, event logs, Prefetch, Amcache, scheduled tasks, SRUM, SUM, IIS logs, shim databases, LNK files and jump lists, startup folders, PowerShell history and transcripts, Chrome, Edge, Brave and Firefox history, WebCache, Windows Timeline, Recycle Bin and Defender logs.
+4. A KAPE-style target set is pulled out (plus executables sitting in user-writable folders, so their signatures can be checked): $MFT, $J, $Boot, registry hives with their .LOG1/.LOG2, user NTUSER.DAT and UsrClass.dat, event logs, Prefetch, Amcache, scheduled tasks, SRUM, SUM, IIS logs, shim databases, LNK files and jump lists, startup folders, PowerShell history and transcripts, Chrome, Edge, Brave and Firefox history, WebCache, Windows Timeline, Recycle Bin and Defender logs.
 5. Those files run through the normal parsers, rules and leads, exactly as if a KAPE zip had been dropped in. The ARTIFACTS tab shows the image, its volumes and every file pulled out with its MFT timestamps.
 
 Not read yet: BitLocker volumes (reported, unlock and re-image them), file systems other than NTFS, VMDK, VDI, AFF4, differencing VHD/VHDX, and volume shadow copies inside an image. On Windows, the home install's KAPE job covers shadow copies for VHD/VHDX and live drives.
@@ -153,16 +153,17 @@ The CLI writes `report.md`, `report.json`, `findings.csv`, `indicators.csv` and 
 
 | Tab | What it shows |
 |---|---|
-| 01 SITREP | Verdict, severity counts, the high/critical activity window, hosts and accounts seen, activity by tactic, ATT&CK techniques, indicator types, the top leads, priority findings and per-tool coverage |
+| 01 SITREP | Verdict, severity counts, the high/critical activity window, hosts and accounts seen, activity by tactic, ATT&CK techniques, indicator types, the top leads, the programs to review, priority findings and per-tool coverage |
 | 02 INVESTIGATE | Leads built by correlating artifacts, each with why it matters, what to do next, the evidence and the related timeline events. A pivot box searches findings, indicators, the timeline and leads at once for any name, hash, user, IP or path |
-| 03 FINDINGS | Every finding with severity, category, tool, source file, the reason it fired, a NEXT step, ATT&CK links and the raw evidence. Filter by severity, category or free text |
-| 04 INDICATORS | Atomic IOCs grouped by type with counts, sources and context. Defang toggle and copy-all |
-| 05 TIMELINE | Super timeline across all artifacts in UTC with 100ns precision where the source has it |
-| 06 ARTIFACTS | One entry per parsed file: hashes, notes and every table the parser produced, each exportable to CSV |
-| 07 REJECTED | Files no tool accepts, with the reason and what was done instead, plus guidance on inputs that cannot be accepted |
-| 08 TOOLS | Every Eric Zimmerman tool plus Volatility 3 and Velociraptor: what it does, what it accepts, how Sudo-Z covers it, and whether it works on the website or needs the home install |
+| 03 GRID | A Timeline Explorer style grid over any table: the Programs view (default), findings, the super timeline, indicators, leads, and every parsed artifact or tool CSV. Click a header to sort, type under it to filter (`text`, `!not`, `=exact`, `>n`, `<n`, `/regex/`), group by any column, tag rows, hide columns, resize them, open a row's details and export the current view |
+| 04 FINDINGS | Every finding with severity, category, tool, source file, the reason it fired, a NEXT step, ATT&CK links and the raw evidence. Filter by severity, category or free text |
+| 05 INDICATORS | Atomic IOCs grouped by type with counts, sources and context. Defang toggle and copy-all |
+| 06 TIMELINE | Super timeline across all artifacts in UTC with 100ns precision where the source has it |
+| 07 ARTIFACTS | One entry per parsed file: hashes, notes and every table the parser produced, each exportable to CSV |
+| 08 REJECTED | Files no tool accepts, with the reason and what was done instead, plus guidance on inputs that cannot be accepted |
+| 09 TOOLS | Every Eric Zimmerman tool plus Volatility 3 and Velociraptor: what it does, what it accepts, how Sudo-Z covers it, and whether it works on the website or needs the home install |
 
-Exports: Markdown IOC report (with a Leads to investigate section and a Next line per finding), full JSON, leads CSV, findings CSV, indicators CSV and a timeline CSV that opens directly in Timeline Explorer.
+Exports: Markdown IOC report (with Leads to investigate, Programs to review, and a Next line per finding), full JSON, programs CSV, leads CSV, findings CSV, indicators CSV and a timeline CSV that opens directly in Timeline Explorer.
 
 ## How a file is routed
 
@@ -192,6 +193,33 @@ Each file is identified by its signature first and its name second, so a renamed
 | Anything else | Hasher + bstrings, listed under REJECTED with a reason |
 
 Every file, accepted or not, is hashed with MD5, SHA1 and SHA256.
+
+## Timeline Explorer CSVs
+
+If you already ran the EZ tools (by hand, through KAPE's `!EZParser` module, or with the home install's EZ runner), drop their CSVs in. Each CSV is recognised by its header and analysed with the same rules as the raw artifacts, so it feeds findings, programs, leads and the super timeline instead of only being displayed:
+
+| CSV | What Sudo-Z does with it |
+|---|---|
+| EvtxECmd | Rebuilds each event from the Payload column and runs the full event log rules, per source log |
+| PECmd, AmcacheParser, AppCompatCacheParser, RECmd UserAssist / RunMRU / RADAR, WxTCmd, SrumECmd | Execution evidence: programs, run counts, SHA1s, publishers, network bytes |
+| RECmd batch and plugin CSVs (Services, TaskCache, firewall rules ...) | Persistence and defence evasion checks |
+| MFTECmd $MFT / $J, RBCmd, SBECmd, LECmd, JLECmd | Suspicious locations, timestomping, downloads (Zone.Identifier), deletions, shortcut targets and arguments |
+| SQLECmd browser downloads and history | Risky downloads and URL indicators |
+| Autoruns, Sigcheck | Signature status (verified, not verified, unsigned) for every autostart entry or scanned file |
+| Hayabusa, Chainsaw | Sigma detections become findings at their own level |
+
+On the home install, finished EZ runner and KAPE module jobs load their CSVs into the console automatically.
+
+## Signatures and the Programs view
+
+Every program seen anywhere (Prefetch, Amcache, ShimCache, BAM, UserAssist, SRUM, Sysmon, memory, persistence entries, files pulled out of a disk image) becomes one row in the Programs view, with what is known about its code signature:
+
+* **Sysmon 6 and 7** report whether a driver or DLL was signed and whether the signature was valid. Revoked signatures are flagged high (a common sign of a vulnerable driver being abused).
+* **Autoruns and Sigcheck CSVs** give verified, not verified or unsigned for each file.
+* **PE files** submitted directly, or pulled out of a disk image from user-writable folders, are read for an embedded Authenticode signature and its signer. This finds the signature and who signed it, but does not re-verify it, so treat it as "carries a signature".
+* **Amcache** only records the publisher from the version information. That is shown separately and never counted as a signature.
+
+Each program gets a risk score (location, name tricks, unsigned or invalid signature, persistence, linked findings) and the GRID opens on them sorted by risk, with one-click filters for unsigned, user-writable, persisting, LOLBins and programs with findings. Windows binaries are mostly catalog-signed (their signature lives in a catalog file, not in the binary), so "no embedded signature" on a file in System32 is normal; the score only weighs it heavily for files in user-writable places.
 
 ## What counts as an IOC
 
@@ -620,6 +648,7 @@ js/core/                bytes, zip (DecompressionStream), hashes, strings, CFB, 
 js/parsers/             evtx, prefetch, lnk, shellitems, jumplist, regf, reglog (RLA), ntfs, sqlite, ese, legacy (.evt, .job, $I30, WAL), misc
 js/tools/               tool level logic: evtx rules, registry plugins, artifacts, ese (SRUM / WebCache), volatility, velociraptor
 js/image/               disk images: lazy sources, E01/VHD/VHDX/QCOW2 containers, MBR/GPT, NTFS reader, KAPE-style targets
+js/grid.js              Timeline Explorer style grid (virtual scrolling, filters, grouping, tags)
 js/ioc/                 shared heuristics, indicator extraction, analysis context,
                         process baseline (baseline.js), leads (leads.js), next-step playbook (playbook.js)
 cli/sudo-z.mjs          headless runner

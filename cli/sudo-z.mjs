@@ -6,7 +6,7 @@ import path from 'node:path';
 if (!globalThis.crypto?.subtle) globalThis.crypto = (await import('node:crypto')).webcrypto;
 const { analyze } = await import('../js/engine.js');
 const { fromFd } = await import('../js/image/source.js');
-const { markdown, timelineCsv, findingsCsv, indicatorsCsv, leadsCsv } = await import('../js/report.js');
+const { markdown, timelineCsv, findingsCsv, indicatorsCsv, leadsCsv, programsCsv } = await import('../js/report.js');
 
 const args = process.argv.slice(2);
 let out = 'sudo-z-out'; let defanged = true; const targets = [];
@@ -36,6 +36,7 @@ fs.writeFileSync(path.join(out, 'findings.csv'), findingsCsv(rep));
 fs.writeFileSync(path.join(out, 'indicators.csv'), indicatorsCsv(rep));
 fs.writeFileSync(path.join(out, 'timeline.csv'), timelineCsv(rep));
 fs.writeFileSync(path.join(out, 'leads.csv'), leadsCsv(rep));
+fs.writeFileSync(path.join(out, 'programs.csv'), programsCsv(rep));
 const s = rep.severity;
 console.log(`${rep.verdict}  crit ${s.critical} high ${s.high} med ${s.medium} low ${s.low}  | ${rep.counts.files} files (${rep.counts.rejected} not accepted) | ${rep.indicators.length} indicators | ${rep.timeline.length} timeline events`);
 if (rep.leads?.length) { console.log('  LEADS TO INVESTIGATE'); for (const l of rep.leads.slice(0, 10)) console.log(`  >> [${l.sev.toUpperCase().padEnd(8)}] ${l.kind}: ${l.title}`); }

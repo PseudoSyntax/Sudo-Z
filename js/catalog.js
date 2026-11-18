@@ -23,7 +23,7 @@ export const CATALOG = [
   { tool: 'iisGeolocate', status: 'partial', accepts: 'IIS W3C logs (u_ex*.log)', what: 'Geolocates client IPs in IIS logs with a MaxMind database and records malformed lines.', sudoz: 'Parses the logs and hunts for web shell commands, SQL injection, known Exchange/SharePoint/ProxyShell exploit paths, scanners and 404 floods. Geolocation is left to you: client IPs are listed for offline lookup.' },
   { tool: 'RLA', status: 'full', accepts: 'Dirty hives + .LOG / .LOG1 / .LOG2', what: 'Replays registry transaction logs into dirty hives.', sudoz: 'Submit a hive with its logs in the same folder and they are replayed before parsing: new format (HvLE, Windows 8.1+) with Marvin32 hash checks and sequence handling across LOG1/LOG2, and the old DIRT bitmap format. Tested byte-identical to Windows 10 recovery on msuhanov\'s test hives.' },
   { tool: 'EZViewer', status: 'n/a', accepts: 'Documents, text, PDF', what: 'Standalone viewer for many document formats; unknown files open in a hex editor.', sudoz: 'Viewer, not an analyser. Sudo-Z hashes and string-scans documents instead.' },
-  { tool: 'Timeline Explorer', status: 'n/a', accepts: 'CSV / XLSX', what: 'Spreadsheet-style viewer for the CSVs the other tools produce.', sudoz: 'Replaced by the built-in super timeline and table views. Every table and the timeline export to CSV that Timeline Explorer opens.' },
+  { tool: 'Timeline Explorer', status: 'full', accepts: 'CSV output of every EZ tool (and KAPE !EZParser), Autoruns, Sigcheck, Hayabusa, Chainsaw', what: 'Spreadsheet-style viewer for the CSVs the other tools produce.', sudoz: 'Two halves. The CSVs are analysed, not just shown: each one is recognised by its header (EvtxECmd, PECmd, AmcacheParser, AppCompatCacheParser, MFTECmd $MFT/$J, LECmd, JLECmd, RBCmd, SBECmd, RECmd batch and plugin CSVs, SrumECmd, WxTCmd, SQLECmd browser downloads/history, Autoruns, Sigcheck, Hayabusa) and fed through the same rules as the binary artifacts, so findings, programs, leads and the timeline fill in. The GRID tab is the viewer: any table (programs, findings, timeline, every tool CSV) with sorting, per-column filters, group by, row tagging, column chooser and CSV export.' },
   { tool: 'Registry Explorer', status: 'n/a', accepts: 'Registry hives', what: 'GUI registry viewer with bookmarks and plugins.', sudoz: 'GUI. Its plugins are covered by the RECmd section above.' },
   { tool: 'MFTExplorer', status: 'n/a', accepts: '$MFT', what: 'GUI for browsing $MFT.', sudoz: 'GUI. See MFTECmd.' },
   { tool: 'JumpList Explorer', status: 'n/a', accepts: 'Jump lists', what: 'GUI for Jump Lists.', sudoz: 'GUI. See JLECmd.' },
@@ -49,7 +49,7 @@ export const NOT_ACCEPTED_HELP = [
 // the home install (local server + optional `sudo-z setup`).
 const AVAIL_OVERRIDE = {
   'EZViewer': ['No (Windows GUI)', 'Downloaded by sudo-z setup ez (Windows); open it yourself'],
-  'Timeline Explorer': ['Replaced by built-in tables; CSV exports open in it', 'Downloaded by sudo-z setup ez (Windows); open the exported CSVs in it'],
+  'Timeline Explorer': ['Yes: tool CSVs are analysed, and the GRID tab is a built-in viewer', 'Same; EZ runner and KAPE module CSVs load into the console automatically'],
   'Registry Explorer': ['No (Windows GUI); RECmd logic built in', 'Downloaded by sudo-z setup ez (Windows)'],
   'MFTExplorer': ['No (Windows GUI); MFTECmd logic built in', 'Downloaded by sudo-z setup ez (Windows)'],
   'JumpList Explorer': ['No (Windows GUI); JLECmd logic built in', 'Downloaded by sudo-z setup ez (Windows)'],

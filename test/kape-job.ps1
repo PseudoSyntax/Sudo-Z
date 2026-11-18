@@ -7,6 +7,15 @@
 $ErrorActionPreference = 'Stop'
 $t = Join-Path $env:RUNNER_TEMP 'kapetest'; New-Item -ItemType Directory -Force -Path $t | Out-Null
 
+# 0. embedded Authenticode signer of a signed binary (node.exe)
+$nodeExe = (Get-Command node).Source
+$sig = node -e "import('./js/parsers/pe.js').then(m=>{const i=m.peInfo(new Uint8Array(require('fs').readFileSync(process.argv[1])));console.log(JSON.stringify(i))})" $nodeExe
+Write-Host "node.exe: $sig"
+if (-not ($sig | ConvertFrom-Json).signed -or -not ($sig | ConvertFrom-Json).signer) { throw 'peInfo did not find the signer of node.exe' }
+$sig2 = node -e "import('./js/parsers/pe.js').then(m=>{console.log(JSON.stringify(m.peInfo(new Uint8Array(require('fs').readFileSync(process.argv[1])))))})" "$env:WINDIR\System32\notepad.exe"
+Write-Host "notepad.exe (catalog-signed, no embedded signature expected): $sig2"
+
+
 # 1. stand-in kape.exe
 $cs = @'
 using System; using System.IO;

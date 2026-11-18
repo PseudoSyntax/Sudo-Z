@@ -24,8 +24,12 @@ import { isRegLog, replayHive } from './parsers/reglog.js';
 import { buildLeads, attachNextSteps } from './ioc/leads.js';
 import { probeImage, extractImage, groupSegments, IMAGE_EXT } from './image/index.js';
 import { fromBytes } from './image/source.js';
+import { isPe } from './parsers/pe.js';
+import { runPe } from './tools/binaries.js';
+import { buildPrograms, gradeSignatures } from './ioc/programs.js';
+import { detectEzCsv, runEzCsv } from './tools/ezcsv.js';
 
-export const VERSION = '1.3.0';
+export const VERSION = '1.4.0';
 const MAX_ZIP_DEPTH = 3;
 const MAX_FILE = 1.5 * 1024 ** 3;
 
@@ -58,6 +62,8 @@ export function detect(name, u8) {
   if (isEse(u8)) return { id: 'ese', tool: /srudb/i.test(b) ? 'SrumECmd' : /\.mdb$/i.test(b) ? 'SumECmd' : 'ESE', label: 'ESE database' };
   if (isWal(u8)) return { id: 'wal', tool: 'SQLECmd', label: 'SQLite write-ahead log' };
   if (isJob(u8, b)) return { id: 'job', tool: 'Sudo-Z', label: 'Task Scheduler 1.0 job' };
+  const ez = detectEzCsv(b, u8);
+  if (ez) return { id: 'ezcsv', tool: ez.tool, label: ez.label, ez };
   const head = utf8(u8.subarray(0, 4096));
   if (/\.jsonl?$/i.test(b) && looksLikeVol(u8, b)) return { id: 'vol', tool: 'Volatility 3', label: 'Volatility 3 output' };
   const mem = memoryImage(u8, b);
@@ -66,6 +72,7 @@ export function detect(name, u8) {
   if (/consolehost_history\.txt$/i.test(b)) return { id: 'pshistory', tool: 'Sudo-Z', label: 'PowerShell history' };
   if (/<Task\s[^>]*xmlns=["']http:\/\/schemas\.microsoft\.com\/windows\/2004\/02\/mit\/task/i.test(head) || /^﻿?<\?xml[^>]*\?>\s*<Task/i.test(head) || (/\x00<\x00T\x00a\x00s\x00k\x00/.test(String.fromCharCode(...u8.subarray(0, 400))))) return { id: 'task', tool: 'Sudo-Z', label: 'Scheduled task XML' };
   if (/\.(ps1|psm1|psd1|bat|cmd|vbs|vbe|js|jse|wsf|hta|sh|py|txt|log|xml|ini|inf|reg|url|csv|json|html?|aspx?|ashx|php|jsp)$/i.test(b) && !/[\x00-\x08\x0e-\x1f]/.test(head.replace(/\x00/g, '').slice(0, 1000))) return { id: 'text', tool: 'Sudo-Z', label: 'Script / text file' };
+  if (isPe(u8)) return { id: 'pe', tool: 'Hasher + Sigcheck', label: 'Windows executable' };
   if (u8[0] === 0x4d && u8[1] === 0x5a) return { reject: true, reason: 'Windows PE executable/DLL. Not an Eric Zimmerman tool input; hashed and string-scanned only.', strings: true, pe: true };
   if (/\.sdb$/i.test(b)) return { id: 'strings', tool: 'bstrings', label: 'Shim database (.sdb, SDB Explorer input)', partial: true, sdb: true };
   if (/^(e01|ex01|s01|l01|aff4?|vmdk|vhdx?|vdi|qcow2?|dd|img|iso|dmg)$/i.test(ext(b)) || /^(hiberfil|pagefile|swapfile)\.sys$/i.test(b)) return { reject: true, reason: /^(hiberfil|pagefile|swapfile)\.sys$/i.test(b) ? 'Hibernation or page file (memory). Use Volatility 3 through the home install.' : 'Disk image Sudo-Z could not open (no NTFS volume found, or an unsupported container such as VMDK, VDI, AFF4 or DMG). Supported: raw/dd, split raw, E01, VHD, VHDX, QCOW2.' };
@@ -123,7 +130,7 @@ async function openImages(inputs, onProgress, log) {
 /** Expand inputs (zips may be nested). inputs: [{name, data:Uint8Array}] */
 async function expand(inputs, log) {
   const out = []; const rejected = [];
-  const walk = async (name, data, depth, parent) => {
+  const walk = async (name, data, depth, parent, meta = {}) => {
     if (isZip(data) && /\.zip$|^[^.]*$/i.test(base(name)) || (isZip(data) && depth === 0)) {
       if (depth >= MAX_ZIP_DEPTH) { rejected.push({ name, size: data.length, reason: `Nested zip deeper than ${MAX_ZIP_DEPTH} levels.`, parent }); return; }
       log(`unzipping ${name}`);
@@ -140,9 +147,9 @@ async function expand(inputs, log) {
       }
       return;
     }
-    out.push({ name, data, parent });
+    out.push({ ...meta, name, data, parent });
   };
-  for (const i of inputs) await walk(i.name, i.data, 0, null);
+  for (const i of inputs) { const { name, data, parent, ...meta } = i; await walk(name, data, 0, parent || null, meta); }
   return { files: out, rejected };
 }
 
@@ -214,6 +221,8 @@ export async function analyze(inputs, { onProgress = () => {}, log = () => {} } 
         case 'indx': r = A.runIndx(f.data, ff, ctx, shared); break;
         case 'vol': r = runVol(f.data, ff, ctx, shared); break;
         case 'velo': r = runVelo(f.data, ff, ctx); break;
+        case 'pe': r = runPe(f.data, ff, ctx, { winPath: f.winPath, fromImage: f.fromImage, si: f.si, sha1: rec.hashes?.sha1 }); break;
+        case 'ezcsv': r = runEzCsv(f.data, ff, ctx, f.det.ez, shared); break;
         case 'velo-meta': { const t = utf8(f.data); for (const m of t.matchAll(/"(?:Hostname|Fqdn|hostname|fqdn)"\s*:\s*"([^"]+)"/g)) ctx.hosts.add(m[1]); r = { tool: 'Velociraptor', artifact: f.det.label, summary: `${f.data.length} bytes`, tables: [], notes: [] }; break; }
         case 'reglog': case 'wal':
           if (f.pairedWith) r = { tool: f.det.id === 'wal' ? 'SQLECmd' : 'RLA', artifact: f.det.label, summary: `${f.det.id === 'wal' ? 'merged into' : 'replayed into'} ${f.pairedWith.split('/').pop()}`, tables: [], notes: [] };
@@ -247,6 +256,7 @@ export async function analyze(inputs, { onProgress = () => {}, log = () => {} } 
     if (susp && sources.length >= 2) ctx.finding({ sev: 'high', category: 'Correlation', tool: 'Sudo-Z', file: '(multiple)', time: list.map((l) => l.time).filter(Boolean).sort()[0], title: `${name.split('\\').pop()} confirmed by ${sources.length} independent execution artifacts`, detail: sources.join(', '), evidence: [...new Set(list.map((l) => l.path))].slice(0, 5).join('\n') });
   }
   const timeline = ctx.timeline.filter((e) => e.time).sort((a, b) => a.time.localeCompare(b.time));
+  try { gradeSignatures(ctx); } catch (e) { log('signature grading failed: ' + e.message); }
   attachNextSteps(ctx.findings);
   const findings = ctx.sortedFindings();
   const indicators = ctx.indicators.list();
@@ -256,6 +266,8 @@ export async function analyze(inputs, { onProgress = () => {}, log = () => {} } 
   const first = timeline[0]?.time, last = timeline[timeline.length - 1]?.time;
   // attack window = span of high/critical findings
   const hot = findings.filter((x) => SEV_RANK[x.sev] >= 3 && x.time).map((x) => x.time).sort();
+  let programs = [];
+  try { programs = buildPrograms(ctx, findings); } catch (e) { log('program view failed: ' + e.message); }
   let leads = [];
   try { ctx.timeline = timeline; leads = buildLeads(ctx, shared, { attackFirst: hot[0], attackLast: hot[hot.length - 1] }); } catch (e) { log('lead generation failed: ' + e.message); }
   return {
@@ -263,6 +275,6 @@ export async function analyze(inputs, { onProgress = () => {}, log = () => {} } 
     verdict, severity: sev, counts,
     hosts: [...ctx.hosts].filter(Boolean), users: [...ctx.users].filter((u) => u && !/^(-|system|local service|network service|anonymous logon|dwm-\d+|umfd-\d+)$/i.test(u) && !/\$$/.test(u)),
     window: { first, last, attackFirst: hot[0], attackLast: hot[hot.length - 1] },
-    leads, findings, indicators, timeline, files: results,
+    leads, programs, findings, indicators, timeline, files: results,
   };
 }

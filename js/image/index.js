@@ -47,6 +47,7 @@ export async function extractImage(segs, { onProgress = () => {}, log = () => {}
   const vols = await listVolumes(disk);
   if (!vols.length) notes.push('No partition table or known file system found.');
   let total = 0;
+  const letters = new Map(); let nextLetter = 'D'.charCodeAt(0);
   for (const v of vols) {
     const row = [v.index, v.scheme, v.type, v.name || '', v.fs || 'unknown', v.start, v.size, ''];
     vtable.push(row);
@@ -62,23 +63,29 @@ export async function extractImage(segs, { onProgress = () => {}, log = () => {}
       nt = await new Ntfs(volumeSource(disk, v)).open({ onProgress: (p) => onProgress(0.02 + p * 0.2, `${label}: indexing $MFT (vol ${v.index})`) });
     } catch (e) { row[7] = `NTFS could not be opened: ${e.message}`; notes.push(`Volume ${v.index}: ${e.message}`); continue; }
     const picks = selectTargets(nt);
+    // drive letter guess: the volume holding Windows is C:, the rest D:, E: ...
+    const isOs = [...picks].some((p) => /^windows\/system32\//i.test(p.file.path));
+    const letter = isOs && ![...letters.values()].includes('C') ? 'C' : String.fromCharCode(nextLetter++);
+    letters.set(v.index, letter);
+    const perLabel = new Map(); const perBudget = new Map();
     let got = 0, skipped = 0;
     row[7] = `${nt.recs.length} MFT records, ${picks.length} target files`;
     // $MFT comes straight from the reader (already in memory)
     for (let i = 0; i < picks.length; i++) {
       const p = picks[i];
       if (i % 10 === 0) { onProgress(0.22 + (i / picks.length) * 0.7, `${label}: extracting ${p.file.path.split('/').pop()}`); await new Promise((r) => setTimeout(r, 0)); }
-      const cap = Math.min(p.opts.max || FILE_CAP, TOTAL_CAP - total);
-      if (cap <= 0) { skipped++; continue; }
+      const cap = Math.min(p.opts.max || FILE_CAP, TOTAL_CAP - total, p.opts.budget ? p.opts.budget - (perBudget.get(p.label) || 0) : Infinity);
+      if (cap <= 0 || (p.opts.limit && (perLabel.get(p.label) || 0) >= p.opts.limit) || (p.opts.max && p.stream.size > p.opts.max && p.opts.last)) { skipped++; continue; }
+      perLabel.set(p.label, (perLabel.get(p.label) || 0) + 1);
       let data;
       try {
         if (p.file.id === 0) data = nt.mftBytes.subarray(0, Math.min(nt.mftBytes.length, cap));
         else data = await nt.readStream(p.stream, { max: cap, dropSparse: !!p.opts.dropSparse });
       } catch (e) { xtable.push([p.label, p.file.path, p.stream.size, '', '', `skipped: ${e.message}`]); skipped++; continue; }
       const truncated = p.stream.size > data.length && !p.opts.dropSparse;
-      total += data.length; got++;
+      total += data.length; got++; perBudget.set(p.label, (perBudget.get(p.label) || 0) + data.length);
       const out = p.opts.as ? p.file.path.replace(/[^/]+$/, p.opts.as) : p.file.path;
-      files.push({ name: `${vname}/${out}`, data, parent: name });
+      files.push({ name: `${vname}/${out}`, data, parent: name, winPath: `${letter}:\\${p.file.path.replace(/\//g, '\\')}`, fromImage: true, si: p.file.si });
       xtable.push([p.label, '/' + p.file.path + (p.opts.stream ? ':' + p.opts.stream : ''), data.length, p.file.si?.created || '', p.file.si?.modified || '', truncated ? `truncated at ${data.length} bytes` : p.file.id]);
     }
     if (skipped) notes.push(`Volume ${v.index}: ${skipped} target file(s) skipped (size cap of ${TOTAL_CAP / 1024 ** 3} GB reached or unreadable).`);

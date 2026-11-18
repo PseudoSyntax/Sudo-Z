@@ -498,6 +498,7 @@ function amcachePlugins(root, f, ctx, tables) {
   for (const r of rows) {
     ctx.event({ time: r[0], tool: 'AmcacheParser', file: f.name, type: 'Amcache entry (program present/executed)', desc: `${r[1]} SHA1 ${r[2]}` });
     const res = ctx.exec_({ path: r[1], time: r[0], tool: 'AmcacheParser', file: f.name, source: 'Amcache', sha1: r[2] || null });
+    if (/\.(exe|dll|sys|scr|com)$/i.test(r[1])) ctx.sign({ path: r[1], sha1: r[2], publisher: r[3], osComponent: !!r[7], kind: /\.sys$/i.test(r[1]) ? 'driver' : /\.dll$/i.test(r[1]) ? 'dll' : 'exe', source: 'Amcache', file: f.name, time: r[0] });
     if (res?.sev) { /* sha1 indicator added by exec_ */ }
     else if (r[2] && !r[7] && !r[3] && /\.exe$/i.test(r[1]) && !/\\(program files|windows)\\/i.test(r[1])) ctx.indicators.add('sha1_unsigned_review', r[2], f.name, r[1]);
   }
@@ -506,6 +507,7 @@ function amcachePlugins(root, f, ctx, tables) {
     const drows = drv.subkeys().map((k) => [k.lastWritten, k.name, k.get('DriverName') || '', k.get('DriverCompany') || '', k.get('DriverSigned'), k.get('Service') || '', String(k.get('DriverId') || '').replace(/^0000/, '')]);
     tables.push(T('Amcache drivers', ['KeyLastWrite', 'Path', 'Name', 'Company', 'Signed', 'Service', 'SHA1'], drows));
     for (const d of drows) {
+      ctx.sign({ path: d[1], sha1: d[6], signed: d[4] === 1 || d[4] === true ? true : d[4] === 0 || d[4] === false ? false : null, publisher: d[3], kind: 'driver', source: 'Amcache drivers', file: f.name, time: d[0] });
       if (d[4] === 0) ctx.finding({ sev: 'high', category: 'Defense Evasion', tool: 'AmcacheParser', file: f.name, time: d[0], title: `Unsigned driver loaded: ${d[2] || d[1]}`, evidence: `${d[1]} SHA1 ${d[6]}`, mitre: ['T1014', 'T1068'] });
       if (/(^|\\)(rtcore64|dbutil_2_3|gdrv|aswarpot|zam64|zamguard64|procexp152|kprocesshacker|mhyprot2?|iqvw64e|asio64|asrdrv10[0-9]|winring0x?6?4?|truesight|gmer64|rentdrv2|cpuz141|wnbios|ene|amifldrv64|physmem|semav6msr|speedfan|viragt64|nvflash|kevp64|hw64)\.sys$/i.test(d[1]) || /^(rtcore64|dbutil_2_3|gdrv|aswarpot|mhyprot2?|iqvw64e|kprocesshacker|truesight|rentdrv2)\.sys$/i.test(d[2])) ctx.finding({ sev: 'critical', category: 'Defense Evasion', tool: 'AmcacheParser', file: f.name, time: d[0], title: `Known vulnerable driver (BYOVD): ${d[2] || d[1]}`, evidence: `${d[1]} SHA1 ${d[6]}`, mitre: ['T1068', 'T1562.001'] });
     }
