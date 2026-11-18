@@ -176,6 +176,7 @@ function sitrepView(v) {
     </div>
     <div>
       <div class="box"><div class="ph"><span class="code">L</span> LEADS TO INVESTIGATE <a class="more" href="#" data-go="investigate">ALL ${(r.leads || []).length} &gt;</a></div><div class="body">${(r.leads || []).length ? r.leads.slice(0, 6).map((l, i) => leadRow(l, i, true)).join('') : '<span class="muted">No correlated leads. Check FINDINGS for single-artifact hits.</span>'}</div></div>
+      ${execBox(r)}
       ${progBox(r)}
       <div class="box"><div class="ph"><span class="code">E</span> PRIORITY FINDINGS</div><div class="body">${top.length ? top.map(findingRow).join('') : '<span class="muted">No high or critical findings.</span>'}</div></div>
       <div class="box"><div class="ph"><span class="code">F</span> COVERAGE</div><div class="body">${coverage(r)}</div></div>
@@ -222,6 +223,14 @@ function findingsView(v) {
 }
 
 // ---------------------------------------------------------------- GRID (Timeline Explorer style)
+function execBox(r) {
+  const cov = r.execution?.coverage || []; if (!cov.length) return '';
+  const ran = (r.programs || []).filter((p) => p.executed === 'Yes').length, pres = (r.programs || []).filter((p) => p.executed === 'Present, not proven run').length;
+  const noPf = (r.programs || []).filter((p) => p.executed === 'Yes' && !p.Prefetch && /\.exe$/i.test(p.name)).length;
+  return `<div class="box"><div class="ph"><span class="code">X</span> EXECUTION EVIDENCE <a class="more" href="#" data-go="grid">MATRIX &gt;</a></div><div class="body">
+    <table class="t exec"><tr><th>ARTIFACT</th><th>STATUS</th><th>ENTRIES</th><th>RANGE</th><th>PROVES</th></tr>${cov.map((c) => `<tr><td>${esc(c.artifact)}</td><td class="${c.state === 'Missing' ? 'bad' : c.entries ? 'ok' : 'warn'}" title="${esc(c.expected)}${c.state === 'Missing' ? ' | KAPE target: ' + esc(c.kape) : ''}">${esc(c.state)}</td><td class="num">${c.entries || ''}</td><td>${c.first ? esc(c.first.slice(0, 10)) + ' → ' + esc(c.last.slice(0, 10)) : ''}</td><td class="muted" title="${esc(c.limits)}">${esc(c.proves)}${c.note ? `<br><span class="warn">${esc(c.note)}</span>` : ''}</td></tr>`).join('')}</table>
+    <div class="fine">${ran} program(s) proven to run, ${pres} present but not proven to run, ${noPf} ran with no Prefetch entry. Hover a status for the expected file path, a description for its limits. The GRID Programs view has one column per artifact.</div></div></div>`;
+}
 function progBox(r) {
   const top = (r.programs || []).filter((p) => p.risk >= 25).slice(0, 8);
   const uns = (r.programs || []).filter((p) => p.signState === 'unsigned' || p.signState === 'invalid').length;
@@ -229,7 +238,7 @@ function progBox(r) {
     ${top.length ? `<table class="t prog"><tr><th>RISK</th><th>PROGRAM</th><th>SIGNATURE</th><th>WHERE</th><th>WHY</th></tr>${top.map((p) => `<tr data-prog="${esc(p.name)}" class="sv-${p.level}"><td class="num"><span class="sev ${p.level}">${p.risk}</span></td><td>${esc(p.name)}</td><td class="${p.signState}">${esc(p.signature.slice(0, 40))}</td><td>${esc(p.location)}</td><td class="muted">${esc(p.reasons.slice(0, 90))}</td></tr>`).join('')}</table>` : '<span class="muted">No program scored 25 or more.</span>'}
     <div class="fine">${uns} unsigned or invalid-signature binaries. Signature data comes from Sysmon 6/7, Autoruns, Sigcheck, Amcache and the PE files themselves.</div></div></div>`;
 }
-const PROG_CHIPS = [['ALL', {}], ['RISK ≥ 45', { 0: '>=45' }], ['UNSIGNED', { 3: '/^(unsigned|signature not valid)/' }], ['USER-WRITABLE', { 4: '=User-writable' }], ['PERSISTS', { 10: '/./' }], ['HAS FINDINGS', { 11: '>0' }], ['LOLBINS', { 2: '/^(powershell|pwsh|cmd|rundll32|regsvr32|mshta|wscript|cscript|certutil|bitsadmin|msiexec|wmic|msbuild|installutil)\\.exe$/' }]];
+const PROG_CHIPS = [['ALL', {}], ['RISK ≥ 45', { 0: '>=45' }], ['RAN', { 14: '=Yes' }], ['RAN, NO PREFETCH', { 14: '=Yes', 17: '=' }], ['PRESENT, NOT RUN', { 14: '=Present, not proven run' }], ['UNSIGNED', { 3: '/^(unsigned|signature not valid)/' }], ['USER-WRITABLE', { 4: '=User-writable' }], ['PERSISTS', { 10: '/./' }], ['HAS FINDINGS', { 11: '>0' }], ['LOLBINS', { 2: '/^(powershell|pwsh|cmd|rundll32|regsvr32|mshta|wscript|cscript|certutil|bitsadmin|msiexec|wmic|msbuild|installutil)\\.exe$/' }]];
 let GRID = null;
 function openGrid(id, preset) {
   S.gridWant = id;

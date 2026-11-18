@@ -291,3 +291,6 @@ table.prog td.unsigned, table.prog td.invalid { color: var(--high); } table.prog
 .strings-form .pg input { accent-color: var(--amber); }
 .strings-form .sstat { color: var(--amber); margin-top: 6px; min-height: 1em; }
 .strings-form [hidden] { display: none !important; }
+
+table.exec td.ok { color: var(--green); } table.exec td.bad { color: var(--high); } table.exec td.warn, table.exec .warn { color: var(--amber); }
+table.exec td:nth-child(-n+4), table.exec th { white-space: nowrap; }

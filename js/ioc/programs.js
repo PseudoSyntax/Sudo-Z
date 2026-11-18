@@ -4,6 +4,7 @@
 import { classifyPath, baseName, SEV_RANK, isLolbin, expandPath } from './heuristics.js';
 import { normKey } from './context.js';
 import { lookalike } from './baseline.js';
+import { executionFor } from './execution.js';
 
 const LOC = [
   [/^[a-z]:\\windows\\temp\\/i, 'User-writable'],
@@ -114,7 +115,10 @@ export function buildPrograms(ctx, findings) {
     if (r.sources.size >= 3 && userish) { risk += 5; reasons.push(`seen by ${r.sources.size} artifacts`); }
     risk = Math.min(100, risk);
     const t = r.times.filter(Boolean).sort();
+    const ev = executionFor(ctx, r.key);
+    if (ev.executed === 'Present, not proven run' && userish && pc.sev) reasons.push('present, no proof it ran');
     out.push({
+      ...ev,
       risk, level: risk >= 70 ? 'critical' : risk >= 45 ? 'high' : risk >= 25 ? 'medium' : risk >= 10 ? 'low' : 'info',
       name: r.name, path: r.path, location: loc, signature: sigText, signState: state,
       signer: r.sign?.signer || r.sign?.publisher || '', sha1: [...r.sha1].slice(0, 3).join(' '),
@@ -130,5 +134,6 @@ export function buildPrograms(ctx, findings) {
 export const PROGRAM_COLUMNS = [
   ['risk', 'Risk'], ['level', 'Level'], ['name', 'Program'], ['signature', 'Signature'], ['location', 'Location'], ['path', 'Path'],
   ['firstSeen', 'First seen'], ['lastSeen', 'Last seen'], ['runs', 'Runs'], ['sources', 'Seen by'], ['persistence', 'Persistence'],
-  ['findings', 'Findings'], ['topFinding', 'Top finding'], ['reasons', 'Why'], ['sha1', 'SHA1'], ['signer', 'Signer / publisher'], ['args', 'Command lines'],
+  ['findings', 'Findings'], ['topFinding', 'Top finding'], ['reasons', 'Why'], ['executed', 'Executed?'], ['firstRun', 'First run'], ['lastRun', 'Last run'],
+  ['Prefetch', 'Prefetch'], ['ShimCache', 'ShimCache'], ['Amcache', 'Amcache'], ['UserAssist', 'UserAssist'], ['SRUM', 'SRUM'], ['sha1', 'SHA1'], ['signer', 'Signer / publisher'], ['args', 'Command lines'],
 ];

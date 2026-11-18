@@ -138,6 +138,7 @@ export function runEzCsv(u8, f, ctx, kind, shared) {
       summary = `${rows.length} detections`; keep(); break;
     }
     case 'pecmd': {
+      ctx.sawArtifact('Prefetch', f.name);
       const cN = col('ExecutableName'), cRun = col('RunCount'), cLast = col('LastRun'), cFiles = col('FilesLoaded'), cSrc = col('SourceFilename'), cH = col('Hash'), cFull = col('FullPath');
       const prev = H.map((h, i) => (/^previousrun\d$/.test(h) ? i : -1)).filter((i) => i >= 0);
       for (const r of rows) {
@@ -145,6 +146,7 @@ export function runEzCsv(u8, f, ctx, kind, shared) {
         const full = (get(r, cFull) || get(r, cFiles).split(/,\s*/).find((p) => p.toLowerCase().endsWith('\\' + exe.toLowerCase())) || exe).replace(/^\\VOLUME\{[^}]+\}/i, 'C:');
         const times = [get(r, cLast), ...prev.map((i) => get(r, i))].map(iso).filter(Boolean);
         ctx.exec_({ path: full, time: times[0], tool: 'PECmd', file: f.name, source: 'Prefetch', extraDetail: `run count ${get(r, cRun)}`, runCount: get(r, cRun) });
+        ctx.evidence({ artifact: 'Prefetch', path: full, time: times[0], lastRuns: times, runCount: +get(r, cRun) || null, file: f.name, pf: baseName(get(r, cSrc)) });
         for (const t of times) ctx.event({ time: t, tool: 'PECmd', file: f.name, type: 'Program executed (Prefetch)', desc: `${full} (${baseName(get(r, cSrc))} ${get(r, cH)})` });
       }
       keep(); break;
@@ -155,6 +157,7 @@ export function runEzCsv(u8, f, ctx, kind, shared) {
       keep(); break;
     }
     case 'amcache': {
+      ctx.sawArtifact('Amcache', f.name);
       const cP = col('FullPath', 'LowerCaseLongPath', 'Path'), cS = col('SHA1'), cT = col('FileKeyLastWriteTimestamp', 'FileIDLastWriteTimestamp', 'KeyLastWriteTimestamp', 'LastWriteTime'), cPub = col('Publisher', 'CompanyName'), cOs = col('IsOsComponent'), cProd = col('ProductName');
       for (const r of rows) {
         const p = get(r, cP); if (!p) continue;
@@ -162,6 +165,7 @@ export function runEzCsv(u8, f, ctx, kind, shared) {
         const t = iso(get(r, cT));
         ctx.event({ time: t, tool: 'AmcacheParser', file: f.name, type: 'Amcache entry (program present/executed)', desc: `${p} SHA1 ${sha1}` });
         ctx.exec_({ path: p, time: t, tool: 'AmcacheParser', file: f.name, source: 'Amcache', sha1: sha1 || null });
+        ctx.evidence({ artifact: 'Amcache', path: p, time: t, sha1: sha1 || null, publisher: get(r, cPub) || '', file: f.name });
         if (/\.(exe|dll|sys|scr|com)$/i.test(p)) ctx.sign({ path: p, sha1, publisher: get(r, cPub) || '', osComponent: truthy(get(r, cOs)), kind: /\.sys$/i.test(p) ? 'driver' : /\.dll$/i.test(p) ? 'dll' : 'exe', source: 'Amcache', file: f.name, time: t });
         if (sha1 && !truthy(get(r, cOs)) && !get(r, cPub) && /\.exe$/i.test(p) && !/\\(program files|windows)\\/i.test(p)) ctx.indicators.add('sha1_unsigned_review', sha1, f.name, p);
         void cProd;
@@ -179,11 +183,13 @@ export function runEzCsv(u8, f, ctx, kind, shared) {
       keep(); break;
     }
     case 'shimcache': {
+      ctx.sawArtifact('ShimCache', f.name);
       const cP = col('Path'), cT = col('LastModifiedTimeUTC'), cX = col('Executed'), cCs = col('ControlSet');
       const first = rows.length ? [...new Set(rows.map((r) => get(r, cCs)))].sort()[0] : '';
       for (const r of rows) {
         if (cCs >= 0 && get(r, cCs) !== first) continue;
         const p = get(r, cP); const pc = classifyPath(p);
+        ctx.evidence({ artifact: 'ShimCache', path: p, time: iso(get(r, cT)), executed: cX >= 0 && get(r, cX) ? truthy(get(r, cX)) : null, file: f.name });
         ctx.event({ time: iso(get(r, cT)), tool: 'AppCompatCacheParser', file: f.name, type: `ShimCache entry${truthy(get(r, cX)) ? ' (executed)' : ''}`, desc: p });
         if (pc.sev || truthy(get(r, cX))) ctx.exec_({ path: p, time: iso(get(r, cT)), tool: 'AppCompatCacheParser', file: f.name, source: 'ShimCache' });
       }
@@ -273,11 +279,12 @@ export function runEzCsv(u8, f, ctx, kind, shared) {
         const cP = col('Path', 'KeyName'), cC = col('Command'), cA = col('Arguments'), cT = col('CreatedOn'), cL = col('LastStart');
         for (const r of rows) { const cmd = `${get(r, cC)} ${get(r, cA)}`.trim(); ctx.event({ time: iso(get(r, cT)), tool: 'RECmd', file: f.name, type: 'Scheduled task registered (TaskCache)', desc: `${get(r, cP)} -> ${cmd}` }); if (cmd) ctx.persist({ mechanism: 'Scheduled task (TaskCache)', name: get(r, cP), command: cmd, time: iso(get(r, cT)), tool: 'RECmd', file: f.name, mitre: ['T1053.005'] }); if (get(r, cL)) ctx.event({ time: iso(get(r, cL)), tool: 'RECmd', file: f.name, type: 'Scheduled task last ran', desc: get(r, cP) }); }
       } else if (has('programname') && has('runcounter')) { // UserAssist
+        ctx.sawArtifact('UserAssist', f.name);
         const cP = col('ProgramName'), cR = col('RunCounter'), cT = col('LastExecuted');
-        for (const r of rows) { const p = get(r, cP); if (!/\\|\.exe$/i.test(p)) continue; ctx.exec_({ path: p, time: iso(get(r, cT)), tool: 'RECmd', file: f.name, source: 'UserAssist', runCount: get(r, cR) }); }
+        for (const r of rows) { const p = get(r, cP); if (!/\\|\.exe$/i.test(p)) continue; ctx.exec_({ path: p, time: iso(get(r, cT)), tool: 'RECmd', file: f.name, source: 'UserAssist', runCount: get(r, cR) }); ctx.evidence({ artifact: 'UserAssist', path: p, time: iso(get(r, cT)), runCount: +get(r, cR) || null, user: (get(r, col('HivePath')).match(/users[\\/]([^\\/]+)/i) || [])[1] || '', file: f.name }); }
       } else if (has('programname') && has('modifiedtime')) { // AppCompatCache via RECmd
         const cP = col('ProgramName'), cT = col('ModifiedTime'), cX = col('Executed');
-        for (const r of rows) { const p = get(r, cP); if (classifyPath(p).sev || truthy(get(r, cX))) ctx.exec_({ path: p, time: iso(get(r, cT)), tool: 'RECmd', file: f.name, source: 'ShimCache' }); }
+        for (const r of rows) { const p = get(r, cP); ctx.evidence({ artifact: 'ShimCache', path: p, time: iso(get(r, cT)), executed: cX >= 0 && get(r, cX) ? truthy(get(r, cX)) : null, file: f.name }); if (classifyPath(p).sev || truthy(get(r, cX))) ctx.exec_({ path: p, time: iso(get(r, cT)), tool: 'RECmd', file: f.name, source: 'ShimCache' }); }
       } else if (has('executable') && has('openedon')) { // RunMRU, CIDSizeMRU, FirstFolder, LastVisitedPidlMRU
         const cE = col('Executable'), cT = col('OpenedOn'); const runMru = /runmru/i.test(rows[0] ? get(rows[0], cBk) : '');
         for (const r of rows) { const e = get(r, cE); if (!e) continue; if (runMru) { const cc = classifyCommand(e); ctx.event({ time: iso(get(r, cT)), tool: 'RECmd', file: f.name, type: 'Run dialog command (RunMRU)', desc: e }); ctx.exec_({ path: e.split(' ')[0], args: e, time: iso(get(r, cT)), tool: 'RECmd', file: f.name, source: 'RunMRU' }); void cc; } else ctx.exec_({ path: e, time: iso(get(r, cT)), tool: 'RECmd', file: f.name, source: 'MRU (program used a file dialog)' }); }
@@ -308,14 +315,15 @@ export function runEzCsv(u8, f, ctx, kind, shared) {
       keep(); break;
     }
     case 'srum': {
+      ctx.sawArtifact('SRUM', f.name);
       const cE = col('ExeInfo'), cT = col('Timestamp'), cS = col('BytesSent'), cR = col('BytesReceived'), cU = col('UserName');
       const per = new Map();
       for (const r of rows) {
         const e = get(r, cE); if (!e) continue; const p = e.replace(/^\\device\\harddiskvolume\d+/i, 'C:');
-        const x = per.get(p) || { sent: 0, recv: 0, first: iso(get(r, cT)), user: get(r, cU) }; x.sent += +get(r, cS) || 0; x.recv += +get(r, cR) || 0; per.set(p, x);
+        const t = iso(get(r, cT)); const x = per.get(p) || { sent: 0, recv: 0, first: t, last: t, user: get(r, cU) }; x.sent += +get(r, cS) || 0; x.recv += +get(r, cR) || 0; if (t && t < x.first) x.first = t; if (t && t > x.last) x.last = t; per.set(p, x);
       }
       for (const [p, x] of per) {
-        if (/^[a-z]:\\/i.test(p)) ctx.exec_({ path: p, time: x.first, tool: 'SrumECmd', file: f.name, source: 'SRUM' });
+        if (/^[a-z]:\\/i.test(p)) { ctx.exec_({ path: p, time: x.first, tool: 'SrumECmd', file: f.name, source: 'SRUM' }); ctx.evidence({ artifact: 'SRUM', path: p, time: x.first, first: x.first, last: x.last, sent: x.sent, recv: x.recv, user: x.user, file: f.name }); }
         const pc = classifyPath(p);
         if (cS >= 0 && x.sent > 50 * 1024 ** 2 && !/\\(chrome|msedge|firefox|onedrive|teams|zoom|outlook|svchost|backgroundtransferhost)\.exe$/i.test(p)) ctx.finding({ sev: pc.sev ? 'high' : 'medium', category: 'Exfiltration', tool: 'SrumECmd', file: f.name, time: x.first, title: `${baseName(p)} sent ${(x.sent / 1024 ** 2).toFixed(0)} MB (SRUM)`, evidence: `${p}\nsent ${x.sent} received ${x.recv} user ${x.user}`, mitre: ['T1041'] });
       }

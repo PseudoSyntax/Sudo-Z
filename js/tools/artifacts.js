@@ -17,7 +17,8 @@ const fmtPath = (p) => normPath(p).replace(/^<vol>/, 'C:');
 export function runPrefetch(u8, f, ctx) {
   const p = parsePrefetch(u8);
   const path = p.executablePath || p.executable;
-  const res = ctx.exec_({ path: fmtPath(path), time: p.runTimes[0], tool: 'PECmd', file: f.name, source: 'Prefetch', extraDetail: `run count ${p.runCount}` });
+  const res = ctx.exec_({ path: fmtPath(path), time: p.runTimes[0], tool: 'PECmd', file: f.name, source: 'Prefetch', extraDetail: `run count ${p.runCount}`, runCount: p.runCount });
+  ctx.evidence({ artifact: 'Prefetch', path: fmtPath(path), time: p.runTimes[0], lastRuns: p.runTimes, runCount: p.runCount, file: f.name, pf: f.name.split(/[\\/]/).pop() });
   for (const t of p.runTimes) ctx.event({ time: t, tool: 'PECmd', file: f.name, type: 'Program execution (Prefetch)', desc: `${path} (run count ${p.runCount})` });
   for (const v of p.volumes) if (v.created) ctx.event({ time: v.created, tool: 'PECmd', file: f.name, type: 'Volume created (Prefetch)', desc: `${v.device} serial ${v.serial}` });
   // referenced files can reveal what the program touched

@@ -27,9 +27,10 @@ import { fromBytes } from './image/source.js';
 import { isPe } from './parsers/pe.js';
 import { runPe } from './tools/binaries.js';
 import { buildPrograms, gradeSignatures } from './ioc/programs.js';
+import { analyseExecution } from './ioc/execution.js';
 import { detectEzCsv, runEzCsv } from './tools/ezcsv.js';
 
-export const VERSION = '1.7.0';
+export const VERSION = '1.8.0';
 const MAX_ZIP_DEPTH = 3;
 const MAX_FILE = 1.5 * 1024 ** 3;
 
@@ -259,6 +260,8 @@ export async function analyze(inputs, opts = {}) {
     if (susp && sources.length >= 2) ctx.finding({ sev: 'high', category: 'Correlation', tool: 'Sudo-Z', file: '(multiple)', time: list.map((l) => l.time).filter(Boolean).sort()[0], title: `${name.split('\\').pop()} confirmed by ${sources.length} independent execution artifacts`, detail: sources.join(', '), evidence: [...new Set(list.map((l) => l.path))].slice(0, 5).join('\n') });
   }
   const timeline = ctx.timeline.filter((e) => e.time).sort((a, b) => a.time.localeCompare(b.time));
+  let execution = { coverage: [] };
+  try { const pre = ctx.findings.filter((x) => SEV_RANK[x.sev] >= 3 && x.time).map((x) => x.time).sort(); execution = analyseExecution(ctx, results, { attackFirst: pre[0] }); } catch (e) { log('execution evidence analysis failed: ' + e.message); }
   try { gradeSignatures(ctx); } catch (e) { log('signature grading failed: ' + e.message); }
   attachNextSteps(ctx.findings);
   const findings = ctx.sortedFindings();
@@ -278,6 +281,6 @@ export async function analyze(inputs, opts = {}) {
     verdict, severity: sev, counts,
     hosts: [...ctx.hosts].filter(Boolean), users: [...ctx.users].filter((u) => u && !/^(-|system|local service|network service|anonymous logon|dwm-\d+|umfd-\d+)$/i.test(u) && !/\$$/.test(u)),
     window: { first, last, attackFirst: hot[0], attackLast: hot[hot.length - 1] },
-    leads, programs, findings, indicators, timeline, files: results,
+    leads, programs, execution, findings, indicators, timeline, files: results,
   };
 }

@@ -23,7 +23,7 @@ export const indicatorsCsv = (rep) => csv(['Type', 'Value', 'Count', 'Sources', 
 
 export const leadsCsv = (rep) => csv(['Severity', 'Kind', 'Category', 'Title', 'Why', 'Next', 'MITRE', 'Entities', 'Evidence'], (rep.leads || []).map((l) => [l.sev, l.kind, l.category || '', l.title, l.why || '', l.next || '', (l.mitre || []).join(' '), (l.entities || []).join(' | '), l.evidence || '']));
 
-const PCOLS = [['risk', 'Risk'], ['level', 'Level'], ['name', 'Program'], ['signature', 'Signature'], ['location', 'Location'], ['path', 'Path'], ['firstSeen', 'FirstSeen'], ['lastSeen', 'LastSeen'], ['runs', 'Runs'], ['sources', 'SeenBy'], ['persistence', 'Persistence'], ['findings', 'Findings'], ['topFinding', 'TopFinding'], ['reasons', 'Why'], ['sha1', 'SHA1'], ['signer', 'SignerOrPublisher'], ['args', 'CommandLines']];
+const PCOLS = [['risk', 'Risk'], ['level', 'Level'], ['name', 'Program'], ['signature', 'Signature'], ['location', 'Location'], ['path', 'Path'], ['firstSeen', 'FirstSeen'], ['lastSeen', 'LastSeen'], ['runs', 'Runs'], ['sources', 'SeenBy'], ['persistence', 'Persistence'], ['findings', 'Findings'], ['topFinding', 'TopFinding'], ['reasons', 'Why'], ['executed', 'Executed'], ['firstRun', 'FirstRun'], ['lastRun', 'LastRun'], ['Prefetch', 'Prefetch'], ['ShimCache', 'ShimCache'], ['Amcache', 'Amcache'], ['UserAssist', 'UserAssist'], ['SRUM', 'SRUM'], ['sha1', 'SHA1'], ['signer', 'SignerOrPublisher'], ['args', 'CommandLines']];
 export const programsCsv = (rep) => csv(PCOLS.map((c) => c[1]), (rep.programs || []).map((p) => PCOLS.map((c) => p[c[0]] ?? '')));
 
 export function mitreSummary(rep) {
@@ -64,11 +64,17 @@ export function markdown(rep, { defanged = true } = {}) {
       L.push('');
     });
   }
+  if (rep.execution?.coverage?.length) {
+    L.push('## Execution evidence', '', 'The five core execution artifacts, what was collected, and what each one proves.', '');
+    L.push('| Artifact | Status | Entries | Range | Expected file | Proves | Note |', '|---|---|---|---|---|---|---|');
+    for (const c of rep.execution.coverage) L.push(`| ${c.artifact} | ${c.state} | ${c.entries} | ${c.first ? c.first.slice(0, 10) + ' to ' + c.last.slice(0, 10) : ''} | ${c.expected.replace(/\\/g, '\\\\')} | ${c.proves} | ${c.note} |`);
+    L.push('');
+  }
   const progs = (rep.programs || []).filter((p) => p.risk >= 25);
   if (progs.length) {
     L.push('## Programs to review', '', 'Every program seen in any artifact, scored on location, signature, persistence, name tricks and linked findings. Full list in programs.csv / the GRID tab.', '');
-    L.push('| Risk | Program | Signature | Location | First seen | Seen by | Why |', '|---|---|---|---|---|---|---|');
-    for (const p of progs.slice(0, 60)) L.push(`| ${p.risk} | ${p.name} | ${p.signature} | ${p.location} | ${p.firstSeen} | ${p.sources} | ${d(p.reasons).replace(/\|/g, '/')} |`);
+    L.push('| Risk | Program | Executed? | First run | Signature | Location | Prefetch | ShimCache | Amcache | UserAssist | SRUM | Why |', '|---|---|---|---|---|---|---|---|---|---|---|---|');
+    for (const p of progs.slice(0, 60)) L.push(`| ${p.risk} | ${p.name} | ${p.executed} | ${p.firstRun} | ${p.signature} | ${p.location} | ${p.Prefetch} | ${p.ShimCache} | ${p.Amcache} | ${p.UserAssist} | ${p.SRUM} | ${d(p.reasons).replace(/\|/g, '/')} |`);
     L.push('');
   }
   L.push('## Findings', '');
