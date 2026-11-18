@@ -31,7 +31,7 @@ VOL_PLUGINS = [
     ['windows.malware.ldrmodules', 'windows.ldrmodules'], ['windows.malware.hollowprocesses', 'windows.hollowprocesses'],
     ['windows.malware.processghosting', 'windows.processghosting'], ['windows.malware.suspicious_threads', 'windows.suspicious_threads'],
     ['windows.svcscan'], ['windows.dlllist'], ['windows.cmdscan'], ['windows.consoles'], ['windows.malware.drivermodule', 'windows.drivermodule'],
-    ['windows.registry.userassist'],
+    ['windows.registry.userassist'], ['windows.handles'], ['windows.filescan'],
 ]
 
 def version():
