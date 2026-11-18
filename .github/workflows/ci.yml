@@ -44,6 +44,21 @@ jobs:
           if (miss.length || fp.length) process.exit(1);
           EOF
           node /tmp/look.mjs
+      - name: Disk images (dfvfs test images)
+        run: |
+          mkdir -p /tmp/dfvfs && cd /tmp/dfvfs
+          for f in ext2.raw ext2.E01 ext2.split.E01 ext2.split.E02 ext2.vhd ext2.vhdx ext2.qcow2 ext2.splitraw.000 ext2.splitraw.001 ntfs.raw ntfs-fixed.vhd ntfs-dynamic.vhd ntfs-fixed.vhdx ntfs-dynamic.vhdx ntfs-differential.vhdx gpt.raw mbr.raw bdetogo.raw windows_volume.qcow2; do
+            curl -fsSL -o "$f" "https://raw.githubusercontent.com/log2timeline/dfvfs/main/test_data/$f"
+          done
+          cd "$GITHUB_WORKSPACE" && node test/images.mjs /tmp/dfvfs
+      - name: Server image endpoints
+        run: |
+          (python3 tools/server.py 8793 --no-browser > /tmp/srv2.log 2>&1 &) ; sleep 3
+          curl -fsS -H 'X-Sudo-Z: 1' "http://localhost:8793/api/image/stat?path=/tmp/dfvfs/ext2.split.E01" | grep -q 'ext2.split.E02'
+          test "$(curl -fsS -H 'X-Sudo-Z: 1' 'http://localhost:8793/api/image/read?path=/tmp/dfvfs/ext2.E01&off=0&len=3')" = "EVF"
+          test "$(curl -s -o /dev/null -w '%{http_code}' 'http://localhost:8793/api/image/read?path=/tmp/dfvfs/ext2.E01&off=0&len=3')" = 403
+          curl -s -H 'X-Sudo-Z: 1' -X POST -d '{"source":"C:"}' http://localhost:8793/api/kape/run | grep -q 'Windows program'
+          curl -fsS -H 'X-Sudo-Z: 1' http://localhost:8793/api/jobs | grep -q '^\['
       - name: Named pipe checks
         run: |
           cat > /tmp/pipes.mjs <<'EOF'
@@ -68,6 +83,21 @@ jobs:
           printf 'powershell -nop -w hidden -enc SQBFAFgA\n' > ConsoleHost_history.txt
           node cli/sudo-z.mjs ConsoleHost_history.txt -o /tmp/out
           test -s /tmp/out/report.md
+
+  kape-windows:
+    name: KAPE job + VHDX mount (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: KAPE background job against a read-only mounted VHDX
+        shell: pwsh
+        run: ./test/kape-job.ps1
 
   installer-linux:
     name: Installer (Linux)

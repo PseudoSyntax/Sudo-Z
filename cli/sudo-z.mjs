@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 if (!globalThis.crypto?.subtle) globalThis.crypto = (await import('node:crypto')).webcrypto;
 const { analyze } = await import('../js/engine.js');
+const { fromFd } = await import('../js/image/source.js');
 const { markdown, timelineCsv, findingsCsv, indicatorsCsv, leadsCsv } = await import('../js/report.js');
 
 const args = process.argv.slice(2);
@@ -12,7 +13,7 @@ let out = 'sudo-z-out'; let defanged = true; const targets = [];
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '-o') out = args[++i];
   else if (args[i] === '--no-defang') defanged = false;
-  else if (args[i] === '-h' || args[i] === '--help') { console.log('usage: node cli/sudo-z.mjs <file|dir|zip>... [-o outdir] [--no-defang]'); process.exit(0); }
+  else if (args[i] === '-h' || args[i] === '--help') { console.log('usage: node cli/sudo-z.mjs <file|dir|zip|disk image>... [-o outdir] [--no-defang]\n  disk images: raw/dd, split raw (.001), E01 (all segments), VHD, VHDX, QCOW2'); process.exit(0); }
   else targets.push(args[i]);
 }
 if (!targets.length) { console.error('no input. usage: node cli/sudo-z.mjs <file|dir|zip>... [-o outdir]'); process.exit(1); }
@@ -21,6 +22,7 @@ const inputs = [];
 const walk = (p, rel) => {
   const st = fs.statSync(p);
   if (st.isDirectory()) for (const e of fs.readdirSync(p)) walk(path.join(p, e), rel ? `${rel}/${e}` : e);
+  else if (/\.(e01|e\d\d|ex01|raw|dd|img|\d{3}|vhdx?|qcow2?|bin|disk|mem|vmem|dmp)$/i.test(p) || st.size > 512 * 1024 ** 2) inputs.push({ name: rel || path.basename(p), src: fromFd(fs, fs.openSync(p, 'r'), st.size, rel || path.basename(p)) }); // read on demand
   else inputs.push({ name: rel || path.basename(p), data: new Uint8Array(fs.readFileSync(p)) });
 };
 for (const t of targets) walk(t, fs.statSync(t).isDirectory() ? path.basename(path.resolve(t)) : '');

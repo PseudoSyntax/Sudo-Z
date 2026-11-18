@@ -4,7 +4,7 @@
     sudo-z update                              pull the latest version from GitHub
     sudo-z version                             show installed commit and check for updates
     sudo-z cli <args>                          run the headless analyser (needs Node 18+)
-    sudo-z setup [all|dotnet|ez|vol|status]    install requirements privately: .NET 10, original EZ tools, Volatility 3
+    sudo-z setup [all|dotnet|ez|vol|kape|status]    install requirements privately: .NET 10, original EZ tools, Volatility 3
     sudo-z uninstall                           remove Sudo-Z
   The console uses ES modules and a Web Worker, which browsers block on file://,
   so it is served from a tiny local web server bound to localhost only.

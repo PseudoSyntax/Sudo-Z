@@ -8,7 +8,7 @@ Nothing is uploaded. Files are read with the browser File API and parsed in a We
 
 ## Quick start
 
-**Option 1: just use it.** Open **https://pseudosyntax.github.io/Sudo-Z/**, drop your files, press EXECUTE ANALYSIS. Nothing to install, always the latest version.
+**Option 1: just use it.** Open **https://pseudosyntax.github.io/Sudo-Z/**, drop your files, a KAPE zip, or a disk image (E01, VHD, VHDX, raw, QCOW2), press EXECUTE ANALYSIS. Nothing to install, always the latest version.
 
 **Option 2: install it locally** (works offline, one command, the same command updates it).
 
@@ -56,6 +56,8 @@ Opening `index.html` straight from disk will not work, because browsers block ES
 The website runs everything Sudo-Z rebuilt in JavaScript, in your browser. A browser cannot run Python or Windows programs, so a few things only work in the home install, where `sudo-z` starts a small local server (Python 3.8+, standard library only) next to the console:
 
 * **Volatility 3 on memory images.** Type the image path into the LOCAL ENGINE panel. The image is read in place, so multi-GB dumps never pass through the browser, and the results feed straight into the same report.
+* **KAPE collection (Windows).** Give the LOCAL ENGINE panel a drive (`C:`), a folder, or a VHD/VHDX, pick a target (`!SANS_Triage` by default) and press RUN KAPE. It runs as a background job, asking for admin rights through UAC if `sudo-z` is not elevated. A VHD/VHDX is mounted read-only first and dismounted after. You can add `!EZParser` modules and shadow copies. When it finishes, the collection loads into the console automatically. KAPE is free from Kroll but not redistributable, so `sudo-z setup kape` opens the download page, finds `kape.exe` once you unzip it, and runs `kape --sync` to update its targets.
+* **Disk images by path.** Type an image path into ANALYSE IMAGE and the local server streams only the bytes the reader asks for, so a 500 GB E01 on an external drive never gets copied. Sibling segments (`.E02`, `.002` ...) are picked up automatically.
 * **The original Eric Zimmerman tools.** Point the LOCAL ENGINE panel at an artifact folder and Sudo-Z runs the matching tools the way KAPE's EZParser module does, writing their CSVs for Timeline Explorer. Useful for checking Sudo-Z's findings against the originals.
 
 ### Requirements download
@@ -68,7 +70,7 @@ The website runs everything Sudo-Z rebuilt in JavaScript, in your browser. A bro
 | Eric Zimmerman tools | Eric's own `Get-ZimmermanTools` on Windows; `tools/ez_fetch.py` (same download list, no PowerShell needed) on Linux/macOS | The command-line tools run on Windows, Linux and macOS. SrumECmd and SumECmd are Windows-only, and so are the GUI tools |
 | Python 3 + Volatility 3 | Your Python if you have 3.8+, otherwise a private Python 3.12 installed with `uv` | Installed into its own venv. If the optional extras will not build on a very new Python, the core installs and the extras are tried one by one |
 
-Run `sudo-z setup ez`, `sudo-z setup vol` or `sudo-z setup dotnet` to install just one, and `sudo-z setup status` to check.
+Run `sudo-z setup ez`, `sudo-z setup vol` or `sudo-z setup dotnet` to install just one, and `sudo-z setup status` to check. `sudo-z setup kape` (Windows) finds your KAPE copy and syncs its targets; KAPE itself has to be downloaded from Kroll [7] because its license does not allow redistribution (free for internal company, government, educational and research use).
 
 The local server only listens on localhost, rejects other Host headers and requires a custom header on its API, so other websites open in your browser cannot drive it. Without Python the launcher falls back to serving the console only.
 
@@ -107,6 +109,18 @@ The local server only listens on localhost, rejects other Host headers and requi
 | Get-ZimmermanTools | Not applicable | Used by sudo-z setup ez to fetch every tool |
 | TimeApp | Not applicable | Not needed |
 | XWFIM | Not applicable | Not needed |
+
+## Disk images
+
+Drop an E01, VHD, VHDX, raw/dd (single or split `.001`), or QCOW2 image on the website or the home install, and Sudo-Z triages it the way KAPE would. Nothing is uploaded and the image is never loaded whole: the browser reads only the clusters it needs.
+
+1. The container is opened: E01 chunks are inflated, VHD/VHDX block tables and QCOW2 cluster tables are followed, and split segments are joined.
+2. MBR (including extended partitions) and GPT partition tables are read and every volume's file system is identified.
+3. Each NTFS volume is opened from its boot sector. The full $MFT is read, records are rebuilt into paths, and file contents are read from their data runs, including sparse and LZNT1 compressed files and named streams like `$UsnJrnl:$J`.
+4. A KAPE-style target set is pulled out: $MFT, $J, $Boot, registry hives with their .LOG1/.LOG2, user NTUSER.DAT and UsrClass.dat, event logs, Prefetch, Amcache, scheduled tasks, SRUM, SUM, IIS logs, shim databases, LNK files and jump lists, startup folders, PowerShell history and transcripts, Chrome, Edge, Brave and Firefox history, WebCache, Windows Timeline, Recycle Bin and Defender logs.
+5. Those files run through the normal parsers, rules and leads, exactly as if a KAPE zip had been dropped in. The ARTIFACTS tab shows the image, its volumes and every file pulled out with its MFT timestamps.
+
+Not read yet: BitLocker volumes (reported, unlock and re-image them), file systems other than NTFS, VMDK, VDI, AFF4, differencing VHD/VHDX, and volume shadow copies inside an image. On Windows, the home install's KAPE job covers shadow copies for VHD/VHDX and live drives.
 
 ## Velociraptor
 
@@ -172,6 +186,7 @@ Each file is identified by its signature first and its name second, so a renamed
 | `LfLe` legacy event log / `.job` / `INDX` | `.evt` parser / Task Scheduler 1.0 / MFTECmd ($I30) |
 | Volatility 3 JSON (`__children` rows) | Volatility 3 |
 | Velociraptor collection zip | Velociraptor (uploads decoded, results graded) |
+| E01 / VHD / VHDX / QCOW2 / raw disk with MBR or GPT | Disk image reader, then every parser on the extracted triage files |
 | Memory image (crash dump, hiberfil, LiME, large raw) | Home install only (Volatility 3) |
 | Task XML, `ConsoleHost_history.txt`, scripts | Sudo-Z extras |
 | Anything else | Hasher + bstrings, listed under REJECTED with a reason |
@@ -586,7 +601,7 @@ X-Ways Forensics installation manager.
 |---|---|
 | Memory images (raw, .mem, .vmem, crash dumps, hiberfil, LiME) | Volatility 3 cannot run in a browser. Home install: run sudo-z setup vol, then give the image path in the LOCAL ENGINE panel. On the website: drop the JSON from "vol -r json" instead. |
 | Registry transaction logs (.LOG1 / .LOG2) or SQLite -wal on their own | Submit them in the same folder as their hive / database and they are replayed / merged automatically. Alone they are string-scanned only. |
-| Disk images (E01, VMDK, VHD(X), raw dd) | Too large for the browser and not EZ tool inputs. Collect artifacts with KAPE or Velociraptor first. |
+| Disk images in VMDK, VDI, AFF4 or DMG, differencing VHD/VHDX, BitLocker volumes, non-NTFS file systems | E01, VHD, VHDX, raw/dd, split raw and QCOW2 with NTFS are triaged directly (see Disk images). For the rest, convert to raw (`qemu-img convert -O raw`), unlock BitLocker first, or collect with KAPE. |
 | Encrypted / password-protected zip entries, RAR, 7z, tar | Only standard and ZIP64 zips with stored/deflate entries are opened. Re-zip without a password. |
 | Executables and DLLs (PE files) | Not an EZ tool input. They are hashed and string-scanned; submit hashes to your sandbox / threat intel. |
 | $LogFile, $SDS | Accepted by MFTECmd on Windows (home install: EZ runner); Sudo-Z only string-scans them for now. |
@@ -604,11 +619,12 @@ js/report.js            Markdown / CSV exporters, defanging
 js/core/                bytes, zip (DecompressionStream), hashes, strings, CFB, LZXpress Huffman
 js/parsers/             evtx, prefetch, lnk, shellitems, jumplist, regf, reglog (RLA), ntfs, sqlite, ese, legacy (.evt, .job, $I30, WAL), misc
 js/tools/               tool level logic: evtx rules, registry plugins, artifacts, ese (SRUM / WebCache), volatility, velociraptor
+js/image/               disk images: lazy sources, E01/VHD/VHDX/QCOW2 containers, MBR/GPT, NTFS reader, KAPE-style targets
 js/ioc/                 shared heuristics, indicator extraction, analysis context,
                         process baseline (baseline.js), leads (leads.js), next-step playbook (playbook.js)
 cli/sudo-z.mjs          headless runner
 install.ps1 / install.sh  installers and updaters
-tools/server.py         home install companion server (console + Volatility 3 + EZ tool runner)
+tools/server.py         home install companion server (console, Volatility 3, EZ tool runner, KAPE jobs, image reads by path)
 tools/                  launchers (launch.ps1, sudo-z.sh) and a fallback web server (serve.mjs)
 .github/workflows/      CI checks and installer tests on Windows and Linux
 ```
@@ -640,13 +656,13 @@ All 13 EZ tools the runner uses completed on Windows. On Linux 11 of 13 ran unde
 ## Limits
 
 * Findings are heuristics. Treat them as leads and confirm anything that matters with the original tools (the home install can run them for you).
-* Browser memory caps practical input size around 1.5 GB per file. Memory images go through the home install instead.
+* Browser memory caps practical input size around 1.5 GB per file. Disk images are the exception: they are read in place and only the triage files are loaded (up to 3 GB in total). Memory images go through the home install instead.
 * Not decoded yet: $LogFile, $SDS, deleted SQLite records, ESE dirty-shutdown log replay (esentutl /r), SRUM tables beyond network, app and connection usage.
 * iisGeolocate's geolocation needs a MaxMind database, so Sudo-Z lists client IPs for offline lookup instead.
 
 ## Credits
 
-All credit for the original tools and the research behind them goes to Eric Zimmerman [1]. Volatility 3 is by the Volatility Foundation [6] and Velociraptor by Rapid7 [4]. The registry log replay follows Maxim Suhanov's format specification [5]. Sample data from the plaso project [2], EVTX-ATTACK-SAMPLES by Samir Bousseaden [3] and msuhanov's yarp test hives [5] was used for testing only and is not shipped.
+All credit for the original tools and the research behind them goes to Eric Zimmerman [1]. Volatility 3 is by the Volatility Foundation [6] and Velociraptor by Rapid7 [4]. The registry log replay follows Maxim Suhanov's format specification [5]. KAPE is by Kroll [7]. Disk image test images come from the dfvfs project [8]. Sample data from the plaso project [2], EVTX-ATTACK-SAMPLES by Samir Bousseaden [3] and msuhanov's yarp test hives [5] was used for testing only and is not shipped.
 
 [1] https://ericzimmerman.github.io/
 [2] https://github.com/log2timeline/plaso/tree/main/test_data
@@ -654,3 +670,5 @@ All credit for the original tools and the research behind them goes to Eric Zimm
 [4] https://www.rapid7.com/products/velociraptor/
 [5] https://github.com/msuhanov/regf
 [6] https://github.com/volatilityfoundation/volatility3
+[7] https://www.kroll.com/en/insights/publications/cyber/kroll-artifact-parser-extractor-kape
+[8] https://github.com/log2timeline/dfvfs/tree/main/test_data

@@ -4,7 +4,7 @@
 #   sudo-z update           pull the latest version from GitHub
 #   sudo-z version          show installed commit and check for updates
 #   sudo-z cli <args>       run the headless analyser (needs Node 18+)
-#   sudo-z setup [all|dotnet|ez|vol|status]   install requirements privately: .NET 10, original EZ tools, Volatility 3
+#   sudo-z setup [all|dotnet|ez|vol|kape|status]   install requirements privately: .NET 10, original EZ tools, Volatility 3
 #   sudo-z uninstall        remove Sudo-Z
 set -euo pipefail
 APP="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

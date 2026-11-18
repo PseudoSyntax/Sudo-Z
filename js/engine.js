@@ -22,8 +22,10 @@ import { isEse } from './parsers/ese.js';
 import { isJob, isEvt, isIndx, isWal, mergeWal } from './parsers/legacy.js';
 import { isRegLog, replayHive } from './parsers/reglog.js';
 import { buildLeads, attachNextSteps } from './ioc/leads.js';
+import { probeImage, extractImage, groupSegments, IMAGE_EXT } from './image/index.js';
+import { fromBytes } from './image/source.js';
 
-export const VERSION = '1.2.0';
+export const VERSION = '1.3.0';
 const MAX_ZIP_DEPTH = 3;
 const MAX_FILE = 1.5 * 1024 ** 3;
 
@@ -66,7 +68,7 @@ export function detect(name, u8) {
   if (/\.(ps1|psm1|psd1|bat|cmd|vbs|vbe|js|jse|wsf|hta|sh|py|txt|log|xml|ini|inf|reg|url|csv|json|html?|aspx?|ashx|php|jsp)$/i.test(b) && !/[\x00-\x08\x0e-\x1f]/.test(head.replace(/\x00/g, '').slice(0, 1000))) return { id: 'text', tool: 'Sudo-Z', label: 'Script / text file' };
   if (u8[0] === 0x4d && u8[1] === 0x5a) return { reject: true, reason: 'Windows PE executable/DLL. Not an Eric Zimmerman tool input; hashed and string-scanned only.', strings: true, pe: true };
   if (/\.sdb$/i.test(b)) return { id: 'strings', tool: 'bstrings', label: 'Shim database (.sdb, SDB Explorer input)', partial: true, sdb: true };
-  if (/^(e01|ex01|s01|l01|aff4?|vmdk|vhdx?|vdi|qcow2?|dd|img|iso|dmg)$/i.test(ext(b)) || /^(hiberfil|pagefile|swapfile)\.sys$/i.test(b)) return { reject: true, reason: 'Disk/memory image or system page file. Not accepted: extract artifacts with KAPE/FTK Imager first.' };
+  if (/^(e01|ex01|s01|l01|aff4?|vmdk|vhdx?|vdi|qcow2?|dd|img|iso|dmg)$/i.test(ext(b)) || /^(hiberfil|pagefile|swapfile)\.sys$/i.test(b)) return { reject: true, reason: /^(hiberfil|pagefile|swapfile)\.sys$/i.test(b) ? 'Hibernation or page file (memory). Use Volatility 3 through the home install.' : 'Disk image Sudo-Z could not open (no NTFS volume found, or an unsupported container such as VMDK, VDI, AFF4 or DMG). Supported: raw/dd, split raw, E01, VHD, VHDX, QCOW2.' };
   if (/^(rar|7z|gz|tgz|tar|bz2|xz|cab|wim)$/i.test(ext(b))) return { reject: true, reason: `.${ext(b)} archives are not opened in-browser. Re-pack as a standard .zip.` };
   if (/^(jpe?g|png|gif|bmp|ico|mp3|mp4|avi|mov|wav|ttf|otf|woff2?)$/i.test(ext(b))) return { reject: true, reason: 'Media/font file. No EZ tool parses this; hashed and string-scanned only.', strings: true };
   if (/^(docx?|xlsx?|pptx?|pdf|rtf|one|msg|eml)$/i.test(ext(b))) return { reject: true, reason: 'Office/PDF/mail document. Only EZViewer (a viewer) opens these; hashed and string-scanned for indicators.', strings: true };
@@ -81,6 +83,41 @@ function memoryImage(u8, b) {
   if (/\.(mem|vmem|raw|lime|dmp|vmsn|vmss|bin)$/i.test(b) && u8.length >= 64 * 1024 * 1024) return 'Memory image';
   if (/^(pagefile|swapfile)\.sys$/i.test(b)) return 'Page file (memory)';
   return null;
+}
+
+/**
+ * Pull disk images out of the inputs and replace them with the triage files found inside.
+ * An input is {name, data} or {name, src} (a lazy random-access source for big files).
+ */
+async function openImages(inputs, onProgress, log) {
+  const plain = []; const cands = []; const recs = [];
+  for (const i of inputs) {
+    const src = i.src || (i.data && i.data.length >= 1024 * 1024 && (IMAGE_EXT.test(i.name) || (i.data[0] === 0x45 && i.data[1] === 0x56 && i.data[2] === 0x46)) ? fromBytes(i.data, i.name) : null);
+    let k = null;
+    if (src) { try { k = await probeImage(i.name, src); } catch (e) { log(`image probe failed for ${i.name}: ${e.message}`); } }
+    if (k) { cands.push({ name: i.name, src, kind: k.kind, unsupported: k.unsupported }); continue; }
+    if (i.data) { plain.push(i); continue; }
+    // a lazy input that is not a disk image: load it if it fits
+    if (i.src.size > MAX_FILE) { recs.push({ name: i.name, size: i.src.size, parent: null, status: 'rejected', reason: memoryImage(await i.src.read(0, 4096), base(i.name)) ? 'Memory image. Volatility 3 cannot run in a browser: use the home install (MEMORY panel) or drop vol -r json output.' : 'File larger than the 1.5 GB browser limit and not a disk image Sudo-Z can open.', tool: '-', artifact: '', summary: '', tables: [], notes: [] }); continue; }
+    plain.push({ name: i.name, data: await i.src.read(0, i.src.size) });
+  }
+  const groups = groupSegments(cands);
+  let gi = 0;
+  for (const g of groups) {
+    const t = Date.now();
+    if (g[0].unsupported) { recs.push({ name: g[0].name, size: g[0].src.size, parent: null, status: 'rejected', reason: g[0].unsupported, tool: 'Disk image (Sudo-Z)', artifact: g[0].kind, summary: '', tables: [], notes: [] }); continue; }
+    try {
+      const { files, record } = await extractImage(g, { kind: g[0].kind, log, onProgress: (p, l) => onProgress(((gi + p) / groups.length) * 0.4, l) });
+      record.ms = Date.now() - t;
+      record.notes.unshift('Image itself is not hashed (too large to hash in-browser); every extracted file is.');
+      recs.push(record);
+      plain.push(...files);
+    } catch (e) {
+      recs.push({ name: g[0].name, size: g.reduce((n, s) => n + s.src.size, 0), parent: null, status: 'error', reason: e.message, tool: 'Disk image (Sudo-Z)', artifact: g[0].kind, summary: '', tables: [], notes: [`Image could not be opened: ${e.message}`] });
+    }
+    gi++;
+  }
+  return { plain, recs, images: groups.length };
 }
 
 /** Expand inputs (zips may be nested). inputs: [{name, data:Uint8Array}] */
@@ -113,9 +150,13 @@ export async function analyze(inputs, { onProgress = () => {}, log = () => {} } 
   const t0 = Date.now();
   const ctx = new Context();
   const shared = {};
-  onProgress(0, 'Expanding archives');
-  const { files, rejected } = await expand(inputs, log);
-  const results = [];
+  onProgress(0, 'Opening inputs');
+  const img = await openImages(inputs, onProgress, log);
+  const pstart = img.images ? 0.4 : 0;
+  const prog = (p, l) => onProgress(pstart + p * (1 - pstart), l);
+  onProgress(pstart, 'Expanding archives');
+  const { files, rejected } = await expand(img.plain, log);
+  const results = [...img.recs];
   // routing; MFT first so $J can resolve paths
   const routed = files.map((f) => ({ ...f, det: f.data.length > MAX_FILE ? { reject: true, reason: 'File larger than 1.5 GB browser limit.' } : f.velo ? { id: 'velo', tool: 'Velociraptor', label: 'Velociraptor artifact results' } : f.veloMeta ? { id: 'velo-meta', tool: 'Velociraptor', label: 'Velociraptor collection metadata' } : detect(f.name, f.data) }));
   // pair hives with their transaction logs and SQLite databases with their -wal files
@@ -139,7 +180,7 @@ export async function analyze(inputs, { onProgress = () => {}, log = () => {} } 
   let i = 0;
   for (const f of routed) {
     i++;
-    onProgress(i / (routed.length + 1), `${f.det.tool || 'Hasher'} :: ${base(f.name)}`);
+    prog(i / (routed.length + 1), `${f.det.tool || 'Hasher'} :: ${base(f.name)}`);
     await new Promise((r) => setTimeout(r, 0));
     const rec = { name: f.name, size: f.data.length, parent: f.parent, hashes: null, status: 'parsed', tool: f.det.tool || 'Hasher + bstrings', artifact: f.det.label || '', summary: '', tables: [], notes: [], ms: 0 };
     const t = Date.now();
@@ -218,7 +259,7 @@ export async function analyze(inputs, { onProgress = () => {}, log = () => {} } 
   let leads = [];
   try { ctx.timeline = timeline; leads = buildLeads(ctx, shared, { attackFirst: hot[0], attackLast: hot[hot.length - 1] }); } catch (e) { log('lead generation failed: ' + e.message); }
   return {
-    meta: { tool: 'Sudo-Z', version: VERSION, generated: new Date().toISOString(), durationMs: Date.now() - t0, inputs: inputs.map((i) => ({ name: i.name, size: i.data.length })) },
+    meta: { tool: 'Sudo-Z', version: VERSION, generated: new Date().toISOString(), durationMs: Date.now() - t0, inputs: inputs.map((i) => ({ name: i.name, size: i.src ? i.src.size : i.data.length })) },
     verdict, severity: sev, counts,
     hosts: [...ctx.hosts].filter(Boolean), users: [...ctx.users].filter((u) => u && !/^(-|system|local service|network service|anonymous logon|dwm-\d+|umfd-\d+)$/i.test(u) && !/\$$/.test(u)),
     window: { first, last, attackFirst: hot[0], attackLast: hot[hot.length - 1] },

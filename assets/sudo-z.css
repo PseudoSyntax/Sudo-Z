@@ -227,3 +227,20 @@ pre.ev { margin: 4px 0 0; padding: 6px 8px; background: #050605; border: 1px sol
 .box .ph .more { position: absolute; right: 8px; color: var(--amber); text-decoration: none; font-size: 11px; }
 .box h4 { margin: 10px 0 4px; font-size: 11px; color: var(--dim); letter-spacing: .1em; font-weight: 400; }
 table.rel { margin-top: 6px; font-size: 11px; }
+
+/* local engine sections + background jobs */
+.localbox .sec { margin: 12px 0 2px; font-size: 10px; letter-spacing: .12em; color: var(--amber); border-top: 1px dashed var(--line); padding-top: 8px; }
+.localbox select { width: 100%; background: #050605; color: var(--fg); border: 1px solid var(--line2); padding: 4px 6px; font: inherit; margin: 0 0 4px; }
+.localbox .chk { display: block; font-size: 11px; color: var(--dim); margin: 2px 0; cursor: pointer; }
+.localbox .chk input { vertical-align: middle; margin: 0 4px 0 0; accent-color: var(--amber); }
+.localbox .jobs { font-size: 11px; }
+.localbox .jb { border: 1px solid var(--line); border-left: 3px solid var(--line2); padding: 4px 6px; margin-bottom: 4px; }
+.localbox .jb.running { border-left-color: var(--amber); } .localbox .jb.done { border-left-color: var(--green); } .localbox .jb.error { border-left-color: var(--high); }
+.localbox .jb .r { display: flex; justify-content: space-between; gap: 6px; }
+.localbox .jb .r span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.localbox .jb .st { color: var(--dim); white-space: nowrap; }
+.localbox .jb .cur { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.localbox .jb .bad, .localbox .flash { color: var(--high); } .localbox .flash { color: var(--amber); margin-bottom: 4px; }
+.localbox .jb .acts { display: flex; gap: 4px; margin-top: 4px; } .localbox .jb .acts .tog { font-size: 10px; padding: 1px 6px; }
+.localbox .bar { height: 3px; background: var(--line); margin: 3px 0; overflow: hidden; } .localbox .bar span { display: block; height: 100%; background: var(--amber); }
+.localbox .bar span.ind { animation: ind 1.2s linear infinite; } @keyframes ind { from { margin-left: -30%; } to { margin-left: 100%; } }
