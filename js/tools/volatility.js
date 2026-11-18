@@ -8,6 +8,7 @@ import { isPrivateIp } from '../ioc/indicators.js';
 import { KEYWORD_RULES } from '../core/strings.js';
 import { utf8 } from '../core/bytes.js';
 import { expectedParents, isSingleton, BASELINE } from '../ioc/baseline.js';
+import { classifyPipe, normPipe, pipesInText } from '../ioc/pipes.js';
 
 const T = (title, columns, rows, note) => ({ title, columns, rows, note });
 
@@ -164,6 +165,10 @@ export function runVol(u8, f, ctx, shared) {
     }
     case 'handles': {
       for (const r of rows) if (r.Type === 'Process' && /lsass\.exe/i.test(r.Name || '') && !/^(lsass|csrss|wininit|services|svchost|msmpeng|lsm|smss|system)\.exe$/i.test(r.Process || '')) note('high', `${r.Process} (PID ${r.PID}) holds a handle to lsass.exe`, `GrantedAccess ${r.GrantedAccess}`, '', ['T1003.001'], 'Credential Access');
+      const ownerPath = new Map((shared.vol.pstree || []).filter((p) => p.Path).map((p) => [String(p.PID), String(p.Path)]));
+      const pipes = new Map();
+      for (const r of rows) if (/\\Device\\NamedPipe\\/i.test(r.Name || '')) { const k = `${r.PID}|${normPipe(r.Name)}`; if (!pipes.has(k)) pipes.set(k, r); }
+      if (pipes.size) tables.push(T('Named pipes', ['PID', 'Process', 'Pipe', 'GrantedAccess', 'Verdict'], [...pipes.values()].map((r) => { const v = classifyPipe(r.Name, { name: r.Process, pid: r.PID, path: ownerPath.get(String(r.PID)) }); return [r.PID, r.Process, '\\' + normPipe(r.Name), r.GrantedAccess, v ? `${v.sev.toUpperCase()}: ${v.tool || v.title}` : '']; }).sort((a, b) => (b[4] ? 1 : 0) - (a[4] ? 1 : 0)), 'Every named pipe handle, flagged ones first. Graded in the final pass with the owning process path.'));
       tables.push(T('Handles', ['PID', 'Process', 'Type', 'GrantedAccess', 'Name'], rows.slice(0, 200000).map((r) => [r.PID, r.Process, r.Type, r.GrantedAccess, r.Name])));
       break;
     }
@@ -240,6 +245,7 @@ export function finalizeVol(shared, ctx) {
       ctx.finding({ sev: 'high', category: 'Defense Evasion', tool: 'Volatility 3', file: shared.volFile.psscan, time: r.CreateTime, title: `Hidden process: ${r.ImageFileName} (PID ${r.PID}) found by psscan but not in pslist`, detail: 'An active EPROCESS unlinked from the process list is a DKOM rootkit indicator (or a process that exited without an exit time).', mitre: ['T1014', 'T1564'] });
     }
   }
+  namedPipes(v, shared, ctx);
   if (v.cmdline && (v.pslist || v.pstree)) {
     const names = new Map((v.pstree || v.pslist).map((r) => [r.PID, String(r.ImageFileName || '').toLowerCase()]));
     for (const r of v.cmdline) {
@@ -251,4 +257,24 @@ export function finalizeVol(shared, ctx) {
       }
     }
   }
+}
+
+/** Named pipes from handles, filescan and command lines, graded with the owning process path when known. */
+function namedPipes(v, shared, ctx) {
+  const path = new Map();
+  for (const r of v.pstree || []) if (r.Path) path.set(String(r.PID), String(r.Path));
+  for (const r of v.cmdline || []) if (!path.has(String(r.PID))) { const a = String(r.Args || ''); const m = a.match(/^"([^"]+)"/) || a.match(/^(\S+\.exe)/i); if (m) path.set(String(r.PID), m[1]); }
+  for (const r of v.dlllist || []) if (!path.has(String(r.PID)) && /\.exe$/i.test(r.Path || '')) path.set(String(r.PID), String(r.Path));
+  const seen = new Set(); let n = 0;
+  const report = (raw, owner, file, src) => {
+    const g = classifyPipe(raw, owner); if (!g) return;
+    const key = `${normPipe(raw).toLowerCase()}|${String(owner.name || '').toLowerCase()}`;
+    if (seen.has(key) || n >= 60) return; seen.add(key); n++;
+    ctx.finding({ sev: g.sev, category: g.category, tool: 'Volatility 3', file, title: `Memory: ${g.title}`, detail: `${g.detail} Source: ${src}.`, evidence: `\\\\.\\pipe\\${normPipe(raw)}${owner.name ? `\nowner: ${owner.name} PID ${owner.pid}${owner.path ? ' ' + owner.path : ''}` : ''}`, mitre: g.mitre });
+    ctx.indicators.add('named_pipe', '\\\\.\\pipe\\' + normPipe(raw), file, g.tool || g.title);
+  };
+  for (const r of v.handles || []) if (/\\Device\\NamedPipe\\/i.test(r.Name || '')) report(r.Name, { name: r.Process, pid: r.PID, path: path.get(String(r.PID)) }, shared.volFile.handles, 'windows.handles');
+  for (const r of v.filescan || []) if (/^\\?(Device\\)?NamedPipe\\|\\NamedPipe\\/i.test(r.Name || '')) report(String(r.Name).replace(/^.*?NamedPipe\\/i, ''), {}, shared.volFile.filescan, 'windows.filescan (no owner)');
+  for (const r of v.pstree || []) for (const p of pipesInText(r.Cmd)) report(p, { name: r.ImageFileName, pid: r.PID, path: r.Path }, shared.volFile.pstree, 'command line');
+  for (const r of v.cmdline || []) for (const p of pipesInText(r.Args)) report(p, { name: r.Process, pid: r.PID, path: path.get(String(r.PID)) }, shared.volFile.cmdline, 'command line');
 }

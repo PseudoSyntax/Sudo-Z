@@ -6,6 +6,7 @@ import { classifyCommand, classifyPath, baseName, isLolbin } from '../ioc/heuris
 import { isPrivateIp } from '../ioc/indicators.js';
 import { KEYWORD_RULES } from '../core/strings.js';
 import { expectedParents } from '../ioc/baseline.js';
+import { classifyPipe, normPipe } from '../ioc/pipes.js';
 
 const LOGON_TYPES = { 2: 'Interactive', 3: 'Network', 4: 'Batch', 5: 'Service', 7: 'Unlock', 8: 'NetworkCleartext', 9: 'NewCredentials', 10: 'RemoteInteractive (RDP)', 11: 'CachedInteractive', 12: 'CachedRemoteInteractive', 13: 'CachedUnlock' };
 const PRIV_GROUPS = /^(administrators|domain admins|enterprise admins|schema admins|remote desktop users|backup operators|account operators|server operators|dnsadmins|group policy creator owners|exchange (trusted subsystem|windows permissions)|organization management|remote management users|hyper-v administrators)$/i;
@@ -13,7 +14,6 @@ const OFFICE = /\\(winword|excel|powerpnt|outlook|msaccess|mspub|onenote|visio|e
 const BROWSER = /\\(chrome|msedge|firefox|iexplore|opera|brave)\.exe$/i;
 const SCRIPTY = /\\(cmd|powershell|pwsh|wscript|cscript|mshta|rundll32|regsvr32|certutil|bitsadmin|msbuild|installutil|wmic|schtasks|bash|curl)\.exe$/i;
 const LSASS_ACCESS = /^0x(1010|1410|1418|1438|143a|1f0fff|1fffff|1f1fff|1f3fff|40|1000|1400|101000|0810)$/i;
-const BAD_PIPES = /\\(msagent_|MSSE-|postex_|status_|mojo\.5688\.8052|interprocess_|lsadump|samr_|win_svc|ntsvcs_|scerpc_|PSEXESVC|RemCom|csexecsvc|paexec|winsession|isapi_http|gruntsvc|DserNamePipe|spoolss_|demoagent_)/i;
 
 const r0 = (t) => (t ? String(t).slice(0, 19).replace('T', ' ') : '?');
 const ip = (v) => (v && v !== '-' && v !== '::1' && v !== '127.0.0.1' && !/^fe80/i.test(v) ? v : null);
@@ -320,7 +320,11 @@ function sysmon(r, d, f, ctx, note, ev) {
       break;
     }
     case 15: { const c = d.Contents || ''; const m = c.match(/HostUrl=(\S+)/); if (m) { ctx.indicators.add('url', m[1], f.name, `download of ${d.TargetFilename}`); ev(r, 'File downloaded (Zone.Identifier)', `${d.TargetFilename} from ${m[1]}`); } break; }
-    case 17: case 18: if (BAD_PIPES.test(d.PipeName || '')) note(r, 'high', `Named pipe associated with offensive tooling: ${d.PipeName}`, d.Image, ['T1570', 'T1021.002'], 'Lateral Movement'); break;
+    case 17: case 18: {
+      const g = classifyPipe(d.PipeName, { name: baseName(d.Image || ''), path: d.Image, pid: d.ProcessId });
+      if (g) { note(r, g.sev, `Sysmon ${id}: ${g.title}`, `${id === 17 ? 'created' : 'connected'} by ${d.Image || '?'} (PID ${d.ProcessId || '?'})${d.User ? ' as ' + d.User : ''}. ${g.detail}`, g.mitre, g.category); ctx.indicators.add('named_pipe', '\\\\.\\pipe\\' + normPipe(d.PipeName), f.name, g.tool || g.title); }
+      break;
+    }
     case 22: { const q = d.QueryName || ''; if (q && !/\.(local|lan|arpa|internal)$/i.test(q)) ctx.domains(q, f.name); if (/(ngrok|trycloudflare|duckdns|no-ip|pastebin|transfer\.sh|anonfiles|mega\.nz|portmap|serveo|\.onion|discord\.gg|api\.telegram\.org|raw\.githubusercontent)/i.test(q)) note(r, 'medium', `DNS query to tunnelling/file-share service: ${q}`, d.Image, ['T1102', 'T1572'], 'Command and Control'); break; }
     case 25: note(r, 'high', 'Process tampering (hollowing/herpaderping)', `${d.Image} ${d.Type || ''}`, ['T1055.012'], 'Defense Evasion'); break;
   }

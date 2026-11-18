@@ -44,6 +44,17 @@ jobs:
           if (miss.length || fp.length) process.exit(1);
           EOF
           node /tmp/look.mjs
+      - name: Named pipe checks
+        run: |
+          cat > /tmp/pipes.mjs <<'EOF'
+          const { classifyPipe: c } = await import(process.cwd() + '/js/ioc/pipes.js');
+          const bad = [['\\Device\\NamedPipe\\msagent_4f', {}], ['postex_1a2b', {}], ['RemCom_communicaton', {}], ['abc\\pipe\\spoolss', {}], ['PSHost.1.4412.DefaultAppDomain.rundll32', {}], ['k8s2j4h9wq', { name: 'rundll32.exe' }]];
+          const good = [['mojo.5100.1.123456', { name: 'chrome.exe' }], ['spoolss', { name: 'spoolsv.exe' }], ['PSHost.1.4412.DefaultAppDomain.powershell', {}], ['x7k2p9qw', { name: 'svchost.exe' }], ['srvsvc', { name: 'rundll32.exe' }]];
+          const miss = bad.filter(([p, o]) => !c(p, o)).map((x) => x[0]); const fp = good.filter(([p, o]) => c(p, o)).map((x) => x[0]);
+          console.log('missed', miss, 'false positives', fp);
+          if (miss.length || fp.length) process.exit(1);
+          EOF
+          node /tmp/pipes.mjs
       - name: Local server compiles and enforces its guards
         run: |
           python3 -m py_compile tools/server.py
