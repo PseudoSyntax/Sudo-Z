@@ -61,6 +61,8 @@ jobs:
           curl -fsS -H 'X-Sudo-Z: 1' http://localhost:8793/api/jobs | grep -q '^\['
       - name: Volatility code injection checks
         run: node test/vol-inject.mjs
+      - name: Volatility rootkit checks (SSDT, KTHREAD service tables, DKOM)
+        run: node test/vol-rootkit.mjs
       - name: Named pipe checks
         run: |
           cat > /tmp/pipes.mjs <<'EOF'

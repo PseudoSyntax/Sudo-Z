@@ -1,0 +1,56 @@
+[
+{
+"Index": 0,
+"Address": 18446735277616529408,
+"Module": "ntoskrnl",
+"Symbol": "Nt0"
+},
+{
+"Index": 1,
+"Address": 18446735277616529424,
+"Module": "ntoskrnl",
+"Symbol": "Nt1"
+},
+{
+"Index": 2,
+"Address": 18446735827391414272,
+"Module": "rk_drv",
+"Symbol": null
+},
+{
+"Index": 3,
+"Address": 18446735277616529456,
+"Module": "ntoskrnl",
+"Symbol": "Nt3"
+},
+{
+"Index": 4,
+"Address": 18446735277616529472,
+"Module": "ntoskrnl",
+"Symbol": "Nt4"
+},
+{
+"Index": 6,
+"Address": 18446735277616529504,
+"Module": "ntoskrnl",
+"Symbol": "Nt6"
+},
+{
+"Index": 7,
+"Address": 18446735277616529520,
+"Module": "ntoskrnl",
+"Symbol": "Nt7"
+},
+{
+"Index": 8,
+"Address": 18446735277616529536,
+"Module": "ntoskrnl",
+"Symbol": "Nt8"
+},
+{
+"Index": 9,
+"Address": 18446735277616529552,
+"Module": "ntoskrnl",
+"Symbol": "Nt9"
+}
+]

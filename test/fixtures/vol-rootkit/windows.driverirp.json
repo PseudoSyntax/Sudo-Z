@@ -1,0 +1,26 @@
+[
+{
+"Offset": 1,
+"Driver Name": "\\Driver\\Tcpip",
+"IRP": "IRP_MJ_DEVICE_CONTROL",
+"Address": 18446735827391422464,
+"Module": "UNKNOWN",
+"Symbol": null
+},
+{
+"Offset": 2,
+"Driver Name": "\\Driver\\Disk",
+"IRP": "IRP_MJ_READ",
+"Address": 1,
+"Module": "CLASSPNP",
+"Symbol": null
+},
+{
+"Offset": 3,
+"Driver Name": "\\FileSystem\\Ntfs",
+"IRP": "IRP_MJ_CREATE",
+"Address": 2,
+"Module": "Ntfs",
+"Symbol": null
+}
+]

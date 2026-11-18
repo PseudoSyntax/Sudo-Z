@@ -1,0 +1,16 @@
+[
+{
+"Type": "PspCreateProcessNotifyRoutine",
+"Callback": 18446735827391418368,
+"Module": "UNKNOWN",
+"Symbol": null,
+"Detail": null
+},
+{
+"Type": "PspLoadImageNotifyRoutine",
+"Callback": 18446735277666861056,
+"Module": "WdFilter",
+"Symbol": null,
+"Detail": null
+}
+]
