@@ -56,6 +56,12 @@ jobs:
           dir=$(python -c "import json,sys;print(json.load(open(sys.argv[1]))['dir'])" "$RUNNER_TEMP/ezjob.json")
           node test/compare-ez.mjs "$dir" "$RUNNER_TEMP/szout/report.json" | tee -a "$GITHUB_STEP_SUMMARY"
           cp -r "$dir" "$RUNNER_TEMP/ez-output"
+      - name: EZ CSV headers (reference for the CSV importer)
+        if: always()
+        shell: bash
+        run: |
+          dir=$(python -c "import json,sys;print(json.load(open(sys.argv[1]))['dir'])" "$RUNNER_TEMP/ezjob.json")
+          find "$dir" -name '*.csv' | sort | while read -r f; do echo "### $(basename "$f") rows=$(wc -l < "$f")"; head -n 3 "$f" | cut -c1-2500; done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
