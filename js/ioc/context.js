@@ -10,6 +10,7 @@ export class Context {
     this.exec = new Map(); // lowercase exe name -> [{source, path, time, file}]
     this.hosts = new Set();
     this.users = new Set();
+    this.persistAll = []; // every persistence entry, flagged or not (attack chains use it)
     this._dedupe = new Set();
   }
 
@@ -38,10 +39,9 @@ export class Context {
     const pc = classifyPath(o.path);
     const key = /\\/.test(o.path) ? expandPath(o.path).replace(/^\\(volume\{[^}]+\}|device\\harddiskvolume\d+)/i, 'C:').toLowerCase() : name;
     if (!this.exec.has(key)) this.exec.set(key, []);
-    this.exec.get(key).push({ source: o.source || o.tool, path: o.path, time: o.time, file: o.file, flagged: !!pc.sev });
+    this.exec.get(key).push({ source: o.source || o.tool, path: o.path, time: o.time, file: o.file, flagged: !!pc.sev, sha1: o.sha1 ? String(o.sha1).toLowerCase() : null });
     const cc = classifyCommand([o.path, o.args].filter(Boolean).join(' '));
     if (o.args || /\s/.test(o.path)) { this.text(o.args || '', o.file); this.domains(o.args || '', o.file); }
-    if (o.sha1) this.indicators.add('sha1', o.sha1, o.file, o.path);
     const sev = maxSev(pc.sev, cc.sev, o.baseSev);
     if (sev) {
       const reasons = [...pc.reasons, ...cc.reasons];
@@ -53,6 +53,7 @@ export class Context {
         mitre: [...cc.mitre, ...(pc.score ? ['T1204'] : [])],
       });
       if (pc.score >= 3) this.indicators.add('file_path', o.path, o.file, reasons.join('; '));
+      if (o.sha1) this.indicators.add('sha1', o.sha1, o.file, o.path);
       if (cc.score >= 4 && o.args) this.indicators.add('command_line', [o.path, o.args].join(' ').slice(0, 1000), o.file, cc.reasons.join('; '));
     }
     return { pc, cc, sev };
@@ -62,6 +63,7 @@ export class Context {
   persist(o) {
     // o: {mechanism, name, command, time, tool, file, mitre, alwaysReport}
     const cmd = o.command || '';
+    if (this.persistAll.length < 50000) this.persistAll.push({ mechanism: o.mechanism, name: o.name, command: cmd, time: o.time, file: o.file });
     const exe = (cmd.match(/^"([^"]+)"/) || cmd.match(/^(\S+\.(?:exe|dll|bat|cmd|ps1|vbs|js|com|scr))/i) || cmd.match(/^(.+?\.(?:exe|dll|bat|cmd|ps1|vbs|js|com|scr))\b/i) || [null, cmd.split(' ')[0]])[1] || '';
     const pc = classifyPath(exe);
     const cc = classifyCommand(cmd);

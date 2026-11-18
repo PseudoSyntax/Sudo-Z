@@ -497,8 +497,8 @@ function amcachePlugins(root, f, ctx, tables) {
   tables.push(T('Amcache file entries', ['KeyLastWrite (≈first run/install)', 'Path', 'SHA1', 'Publisher', 'Product', 'Version', 'LinkDate', 'OSComponent', 'Size'], rows, 'SHA1 values are the most useful pivot for threat intel lookups.'));
   for (const r of rows) {
     ctx.event({ time: r[0], tool: 'AmcacheParser', file: f.name, type: 'Amcache entry (program present/executed)', desc: `${r[1]} SHA1 ${r[2]}` });
-    const res = ctx.exec_({ path: r[1], time: r[0], tool: 'AmcacheParser', file: f.name, source: 'Amcache', sha1: null });
-    if (res?.sev && r[2]) ctx.indicators.add('sha1', r[2], f.name, r[1]);
+    const res = ctx.exec_({ path: r[1], time: r[0], tool: 'AmcacheParser', file: f.name, source: 'Amcache', sha1: r[2] || null });
+    if (res?.sev) { /* sha1 indicator added by exec_ */ }
     else if (r[2] && !r[7] && !r[3] && /\.exe$/i.test(r[1]) && !/\\(program files|windows)\\/i.test(r[1])) ctx.indicators.add('sha1_unsigned_review', r[2], f.name, r[1]);
   }
   const drv = R.sub('InventoryDriverBinary');

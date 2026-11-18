@@ -21,6 +21,8 @@ export const timelineCsv = (rep) => csv(['TimeUTC', 'Tool', 'EventType', 'Descri
 export const findingsCsv = (rep) => csv(['Severity', 'Category', 'Title', 'TimeUTC', 'Tool', 'SourceFile', 'MITRE', 'Detail', 'Evidence'], rep.findings.map((f) => [f.sev, f.category, f.title, f.time || '', f.tool, f.file, (f.mitre || []).join(' '), f.detail || '', f.evidence || '']));
 export const indicatorsCsv = (rep) => csv(['Type', 'Value', 'Count', 'Sources', 'Context'], rep.indicators.map((i) => [i.type, i.value, i.count, i.sources.join(' | '), i.context || '']));
 
+export const leadsCsv = (rep) => csv(['Severity', 'Kind', 'Category', 'Title', 'Why', 'Next', 'MITRE', 'Entities', 'Evidence'], (rep.leads || []).map((l) => [l.sev, l.kind, l.category || '', l.title, l.why || '', l.next || '', (l.mitre || []).join(' '), (l.entities || []).join(' | '), l.evidence || '']));
+
 export function mitreSummary(rep) {
   const m = new Map();
   for (const f of rep.findings) for (const t of f.mitre || []) { if (!t) continue; const e = m.get(t) || { id: t, count: 0, worst: 'info' }; e.count++; if (rank(f.sev) > rank(e.worst)) e.worst = f.sev; m.set(t, e); }
@@ -47,6 +49,18 @@ export function markdown(rep, { defanged = true } = {}) {
   L.push('');
   const mitre = mitreSummary(rep);
   if (mitre.length) { L.push('## MITRE ATT&CK techniques observed', '', '| Technique | Findings | Worst severity |', '|---|---|---|'); for (const m of mitre.slice(0, 40)) L.push(`| ${m.id} | ${m.count} | ${m.worst} |`); L.push(''); }
+  if ((rep.leads || []).length) {
+    L.push('## Leads to investigate', '', 'Each lead ties together evidence from more than one artifact, or points at something a single tool would not flag on its own.', '');
+    rep.leads.forEach((l, i) => {
+      L.push(`### ${i + 1}. [${l.sev.toUpperCase()}] ${l.kind}: ${d(l.title)}`, '');
+      if (l.why) L.push(`- Why it matters: ${l.why}`);
+      if (l.next) L.push(`- Next: ${d(l.next)}`);
+      if (l.mitre?.length) L.push(`- ATT&CK: ${l.mitre.join(', ')}`);
+      if (l.evidence) L.push('', '```', d(l.evidence).slice(0, 2500), '```');
+      if (l.related?.length) { L.push('', `Related events (${l.related.length}, first 20):`, ''); for (const e of l.related.slice(0, 20)) L.push(`- ${e.time} ${e.tool} ${e.type}: ${d(String(e.desc || '').slice(0, 200))}`); }
+      L.push('');
+    });
+  }
   L.push('## Findings', '');
   for (const sev of ['critical', 'high', 'medium', 'low']) {
     const fs = rep.findings.filter((f) => f.sev === sev);
@@ -57,6 +71,7 @@ export function markdown(rep, { defanged = true } = {}) {
       L.push(`- When: ${f.time || 'n/a'} | Tool: ${f.tool} | Category: ${f.category}${f.mitre?.length ? ' | ATT&CK: ' + f.mitre.join(', ') : ''}`);
       L.push(`- Source: \`${f.file}\``);
       if (f.detail) L.push(`- Why: ${f.detail}`);
+      if (f.next) L.push(`- Next: ${d(f.next)}`);
       if (f.evidence) L.push('', '```', d(f.evidence).slice(0, 1500), '```');
       L.push('');
     }

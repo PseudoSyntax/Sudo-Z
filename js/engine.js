@@ -21,8 +21,9 @@ import { runVelo, isVeloCollection, veloName } from './tools/velociraptor.js';
 import { isEse } from './parsers/ese.js';
 import { isJob, isEvt, isIndx, isWal, mergeWal } from './parsers/legacy.js';
 import { isRegLog, replayHive } from './parsers/reglog.js';
+import { buildLeads, attachNextSteps } from './ioc/leads.js';
 
-export const VERSION = '1.1.0';
+export const VERSION = '1.2.0';
 const MAX_ZIP_DEPTH = 3;
 const MAX_FILE = 1.5 * 1024 ** 3;
 
@@ -205,6 +206,7 @@ export async function analyze(inputs, { onProgress = () => {}, log = () => {} } 
     if (susp && sources.length >= 2) ctx.finding({ sev: 'high', category: 'Correlation', tool: 'Sudo-Z', file: '(multiple)', time: list.map((l) => l.time).filter(Boolean).sort()[0], title: `${name.split('\\').pop()} confirmed by ${sources.length} independent execution artifacts`, detail: sources.join(', '), evidence: [...new Set(list.map((l) => l.path))].slice(0, 5).join('\n') });
   }
   const timeline = ctx.timeline.filter((e) => e.time).sort((a, b) => a.time.localeCompare(b.time));
+  attachNextSteps(ctx.findings);
   const findings = ctx.sortedFindings();
   const indicators = ctx.indicators.list();
   const counts = { files: results.length, parsed: results.filter((r) => r.status === 'parsed').length, partial: results.filter((r) => r.status === 'partial').length, rejected: results.filter((r) => r.status === 'rejected').length, errors: results.filter((r) => r.status === 'error').length };
@@ -213,11 +215,13 @@ export async function analyze(inputs, { onProgress = () => {}, log = () => {} } 
   const first = timeline[0]?.time, last = timeline[timeline.length - 1]?.time;
   // attack window = span of high/critical findings
   const hot = findings.filter((x) => SEV_RANK[x.sev] >= 3 && x.time).map((x) => x.time).sort();
+  let leads = [];
+  try { ctx.timeline = timeline; leads = buildLeads(ctx, shared, { attackFirst: hot[0], attackLast: hot[hot.length - 1] }); } catch (e) { log('lead generation failed: ' + e.message); }
   return {
     meta: { tool: 'Sudo-Z', version: VERSION, generated: new Date().toISOString(), durationMs: Date.now() - t0, inputs: inputs.map((i) => ({ name: i.name, size: i.data.length })) },
     verdict, severity: sev, counts,
     hosts: [...ctx.hosts].filter(Boolean), users: [...ctx.users].filter((u) => u && !/^(-|system|local service|network service|anonymous logon|dwm-\d+|umfd-\d+)$/i.test(u) && !/\$$/.test(u)),
     window: { first, last, attackFirst: hot[0], attackLast: hot[hot.length - 1] },
-    findings, indicators, timeline, files: results,
+    leads, findings, indicators, timeline, files: results,
   };
 }

@@ -139,15 +139,16 @@ The CLI writes `report.md`, `report.json`, `findings.csv`, `indicators.csv` and 
 
 | Tab | What it shows |
 |---|---|
-| 01 SITREP | Verdict, severity counts, the high/critical activity window, hosts and accounts seen, activity by tactic, ATT&CK techniques, indicator types, priority findings and per-tool coverage |
-| 02 FINDINGS | Every finding with severity, category, tool, source file, the reason it fired, ATT&CK links and the raw evidence. Filter by severity, category or free text |
-| 03 INDICATORS | Atomic IOCs grouped by type with counts, sources and context. Defang toggle and copy-all |
-| 04 TIMELINE | Super timeline across all artifacts in UTC with 100ns precision where the source has it |
-| 05 ARTIFACTS | One entry per parsed file: hashes, notes and every table the parser produced, each exportable to CSV |
-| 06 REJECTED | Files no tool accepts, with the reason and what was done instead, plus guidance on inputs that cannot be accepted |
-| 07 TOOLS | Every Eric Zimmerman tool plus Volatility 3 and Velociraptor: what it does, what it accepts, how Sudo-Z covers it, and whether it works on the website or needs the home install |
+| 01 SITREP | Verdict, severity counts, the high/critical activity window, hosts and accounts seen, activity by tactic, ATT&CK techniques, indicator types, the top leads, priority findings and per-tool coverage |
+| 02 INVESTIGATE | Leads built by correlating artifacts, each with why it matters, what to do next, the evidence and the related timeline events. A pivot box searches findings, indicators, the timeline and leads at once for any name, hash, user, IP or path |
+| 03 FINDINGS | Every finding with severity, category, tool, source file, the reason it fired, a NEXT step, ATT&CK links and the raw evidence. Filter by severity, category or free text |
+| 04 INDICATORS | Atomic IOCs grouped by type with counts, sources and context. Defang toggle and copy-all |
+| 05 TIMELINE | Super timeline across all artifacts in UTC with 100ns precision where the source has it |
+| 06 ARTIFACTS | One entry per parsed file: hashes, notes and every table the parser produced, each exportable to CSV |
+| 07 REJECTED | Files no tool accepts, with the reason and what was done instead, plus guidance on inputs that cannot be accepted |
+| 08 TOOLS | Every Eric Zimmerman tool plus Volatility 3 and Velociraptor: what it does, what it accepts, how Sudo-Z covers it, and whether it works on the website or needs the home install |
 
-Exports: Markdown IOC report, full JSON, findings CSV, indicators CSV and a timeline CSV that opens directly in Timeline Explorer.
+Exports: Markdown IOC report (with a Leads to investigate section and a Next line per finding), full JSON, leads CSV, findings CSV, indicators CSV and a timeline CSV that opens directly in Timeline Explorer.
 
 ## How a file is routed
 
@@ -182,7 +183,7 @@ Every file, accepted or not, is hashed with MD5, SHA1 and SHA256.
 I wanted the report to be something I could act on, so findings come from explicit rules rather than "unusual" scoring. The main groups:
 
 * **Execution from places programs should not live:** Users\Public, Temp, ProgramData root, Recycle Bin, PerfLogs, AppData roots, browser and Outlook caches, admin shares.
-* **Masquerading:** system binary names (svchost, lsass, rundll32...) outside System32, typosquats like `scvhost.exe`, double extensions, right-to-left override characters, renamed system binaries (Sysmon OriginalFileName mismatch).
+* **Masquerading:** checked against a baseline of about 120 common Windows and application processes (explorer.exe, svchost.exe, lsass.exe, csrss.exe, chrome.exe, OneDrive.exe and so on) with their normal folders and parents. It catches misspellings and transpositions (`scvhost.exe`, `explorer.exe` vs `exp1orer.exe`), lookalike Unicode letters (Cyrillic `о` in `svchоst.exe`), digit and letter swaps (`lsas5.exe`), extra suffixes (`svchost32.exe`), spaces, genuine names running from the wrong folder, and wrong parents (lsass not started by wininit). Real near-names like `taskhostw.exe`, `lsaiso.exe` and `osppsvc.exe` are allowlisted. Also double extensions, right-to-left override characters, and renamed system binaries (Sysmon OriginalFileName mismatch).
 * **Known tooling by name or strings:** Mimikatz, Rubeus, SharpHound, Cobalt Strike, Sliver, PsExec and clones, ProcDump, rclone, ngrok, chisel, network scanners, remote access tools, EDR killers, vulnerable drivers (BYOVD).
 * **Command lines:** encoded PowerShell (decoded and re-scanned), download cradles, hidden windows, certutil/bitsadmin/mshta/regsvr32/rundll32 proxy execution, LSASS dumping, shadow copy and backup deletion, hive and NTDS theft, log clearing, account creation and privileged group changes, Defender and firewall tampering, port proxies, RDP and WDigest changes, WMI and PsExec style remote execution, archive staging and exfil uploads, paste and tunnelling services, raw IP URLs.
 * **Persistence:** Run/RunOnce, Active Setup, Winlogon Shell/Userinit, AppInit_DLLs, IFEO debuggers and accessibility backdoors, SilentProcessExit, LSA packages, services and service DLLs, scheduled tasks (including hidden tasks with the SD value removed), startup folder drops, UAC bypass and COM hijack keys, logon scripts, shim databases, WMI event subscriptions. Persistence entries are graded one level higher than the same path seen in plain execution.
@@ -191,6 +192,23 @@ I wanted the report to be something I could act on, so findings come from explic
 * **Memory (Volatility 3):** hidden processes (psscan vs pslist, psxview), unexpected parents for lsass / services / svchost, duplicate singleton processes, Office, web server and WMI processes spawning shells, malicious command lines, LOLBins connected to public IPs, malfind regions with PE headers or shellcode, unlinked DLLs, process hollowing and ghosting, suspicious threads, console history, rootkit drivers and syscall hooks.
 * **Exfiltration (SRUM):** large or upload-heavy network use by non-browser programs, LOLBins with network traffic, network use by programs in suspicious paths.
 * **Web servers:** web shell commands, SQL injection (including leaked database errors), known Exchange and SharePoint exploitation paths, scanners and 404 floods.
+
+## Leads: what an analyst might miss
+
+Single-tool rules catch the obvious. I added a second pass that reads across every artifact and builds **leads**, the things that only show up when the evidence is put side by side. Each lead says why it matters and what to do next, and lists the evidence it used.
+
+| Lead | How it is found |
+|---|---|
+| Attack chain | The same file name appears as Delivered (download, Zone.Identifier, BITS), Executed (Prefetch, Amcache, ShimCache, BAM, Sysmon), Persisted (Run key, service, task), Network (C2 or exfil finding) and Deleted. Three or more stages, or two with a strong finding, become a lead |
+| Executed then deleted | A program in a user-writable folder has execution evidence but is gone from the $MFT or marked deleted |
+| Renamed binary | One SHA1 (Amcache, Sysmon, Velociraptor) under two or more names, such as psexec.exe and svcupdate.exe. Installer temp copies and DLL pairs are skipped |
+| Masquerading | Every lookalike or wrong-folder hit from the process baseline gathered in one place |
+| Activity window | Events within 15 minutes of a high or critical finding that did not trip a rule themselves: the dropper, the logon before, the tool run next |
+| Unflagged new programs | Programs in user folders that ran within 2 hours of the attack window and were not flagged (one per folder, installers filtered) |
+| New account used | An account created (4720 or `net user /add`) and then used for logons |
+| Log tampering | Cleared logs plus gaps in EventRecordID, which reveal selective record deletion that a full clear check misses |
+
+Event logs are also checked for missing record numbers and for the clock jumping backwards in the Security log. Every finding gets a NEXT line from a playbook keyed on its ATT&CK technique, so the report reads as a to-do list rather than a pile of alerts.
 
 Severity runs from INFO to CRITICAL. The verdict is "COMPROMISE LIKELY" when any critical finding exists, "SUSPICIOUS ACTIVITY" for high, "REVIEW RECOMMENDED" for medium.
 
@@ -585,7 +603,8 @@ js/report.js            Markdown / CSV exporters, defanging
 js/core/                bytes, zip (DecompressionStream), hashes, strings, CFB, LZXpress Huffman
 js/parsers/             evtx, prefetch, lnk, shellitems, jumplist, regf, reglog (RLA), ntfs, sqlite, ese, legacy (.evt, .job, $I30, WAL), misc
 js/tools/               tool level logic: evtx rules, registry plugins, artifacts, ese (SRUM / WebCache), volatility, velociraptor
-js/ioc/                 shared heuristics, indicator extraction, analysis context
+js/ioc/                 shared heuristics, indicator extraction, analysis context,
+                        process baseline (baseline.js), leads (leads.js), next-step playbook (playbook.js)
 cli/sudo-z.mjs          headless runner
 install.ps1 / install.sh  installers and updaters
 tools/server.py         home install companion server (console + Volatility 3 + EZ tool runner)

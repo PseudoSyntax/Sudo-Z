@@ -5,6 +5,7 @@ import { parseEvtx, payloadString } from '../parsers/evtx.js';
 import { classifyCommand, classifyPath, baseName, isLolbin } from '../ioc/heuristics.js';
 import { isPrivateIp } from '../ioc/indicators.js';
 import { KEYWORD_RULES } from '../core/strings.js';
+import { expectedParents } from '../ioc/baseline.js';
 
 const LOGON_TYPES = { 2: 'Interactive', 3: 'Network', 4: 'Batch', 5: 'Service', 7: 'Unlock', 8: 'NetworkCleartext', 9: 'NewCredentials', 10: 'RemoteInteractive (RDP)', 11: 'CachedInteractive', 12: 'CachedRemoteInteractive', 13: 'CachedUnlock' };
 const PRIV_GROUPS = /^(administrators|domain admins|enterprise admins|schema admins|remote desktop users|backup operators|account operators|server operators|dnsadmins|group policy creator owners|exchange (trusted subsystem|windows permissions)|organization management|remote management users|hyper-v administrators)$/i;
@@ -14,6 +15,7 @@ const SCRIPTY = /\\(cmd|powershell|pwsh|wscript|cscript|mshta|rundll32|regsvr32|
 const LSASS_ACCESS = /^0x(1010|1410|1418|1438|143a|1f0fff|1fffff|1f1fff|1f3fff|40|1000|1400|101000|0810)$/i;
 const BAD_PIPES = /\\(msagent_|MSSE-|postex_|status_|mojo\.5688\.8052|interprocess_|lsadump|samr_|win_svc|ntsvcs_|scerpc_|PSEXESVC|RemCom|csexecsvc|paexec|winsession|isapi_http|gruntsvc|DserNamePipe|spoolss_|demoagent_)/i;
 
+const r0 = (t) => (t ? String(t).slice(0, 19).replace('T', ' ') : '?');
 const ip = (v) => (v && v !== '-' && v !== '::1' && v !== '127.0.0.1' && !/^fe80/i.test(v) ? v : null);
 
 export function runEvtx(u8, f, ctx) {
@@ -231,6 +233,21 @@ export function runEvtx(u8, f, ctx) {
     ctx.finding({ sev: e.svcs.size >= 3 ? 'high' : 'medium', category: 'Credential Access', tool: 'EvtxECmd', file: f.name, time: e.first, title: `Kerberoasting indicator: ${user} requested RC4 service tickets for ${e.svcs.size} SPN(s)`, detail: `from ${from}`, evidence: [...e.svcs].join(', '), mitre: ['T1558.003'] });
   }
 
+  // ---------------------------------------------------------- record number gaps / clock anomalies (selective deletion)
+  const byNum = recs.filter((r) => Number.isFinite(r.RecordNumber)).sort((a, b) => a.RecordNumber - b.RecordNumber);
+  const chan = (recs[0]?.Channel || '').toLowerCase();
+  let gapCount = 0, backCount = 0;
+  for (let i = 1; i < byNum.length; i++) {
+    const a = byNum[i - 1], b = byNum[i]; const miss = b.RecordNumber - a.RecordNumber - 1;
+    if (miss > 0 && gapCount < 10) {
+      gapCount++;
+      ctx.finding({ sev: parsed.errors ? 'low' : chan === 'security' ? 'high' : 'medium', category: 'Defense Evasion', tool: 'EvtxECmd', file: f.name, time: a.TimeCreated, title: `${miss} event record(s) missing: EventRecordID ${a.RecordNumber + 1}${miss > 1 ? '-' + (b.RecordNumber - 1) : ''} (${r0(a.TimeCreated)} to ${r0(b.TimeCreated)})`, detail: parsed.errors ? 'Some records failed to decode, so this gap may be a parsing artifact.' : 'Record numbers are sequential; a hole in the middle of a log means records were removed selectively (e.g. EventCleaner, Danderspritz eventlogedit) rather than by a full clear.', mitre: ['T1070.001'] });
+      ctx.event({ time: a.TimeCreated, tool: 'EvtxECmd', file: f.name, type: 'Event record gap', desc: `${miss} records missing after ${a.RecordNumber}` });
+    }
+    const dt = Date.parse(b.TimeCreated) - Date.parse(a.TimeCreated);
+    if (dt < -3600000 && backCount < 5 && chan === 'security' && -dt < 30 * 86400000) { backCount++; ctx.finding({ sev: 'medium', category: 'Defense Evasion', tool: 'EvtxECmd', file: f.name, time: b.TimeCreated, title: `Event time clock moved backwards by ${Math.round(-dt / 60000)} min between records ${a.RecordNumber} and ${b.RecordNumber}`, detail: 'Either the system clock was changed (check 4616 and System Kernel-General 1) or records were altered. Small jumps right after boot can be a CMOS or time zone correction.', mitre: ['T1070.006'] }); }
+  }
+
   const tables = [];
   tables.push({ title: 'Notable events', columns: ['Time', 'Severity', 'EventId', 'Channel', 'Rule', 'Payload'], rows: notable });
   if (logons.size) tables.push({ title: 'Successful logons (4624) summary', columns: ['Account', 'Source', 'LogonType', 'Count', 'First', 'Last'], rows: [...logons].map(([k, e]) => { const [a, s, t] = k.split('|'); return [a, s, `${t} ${LOGON_TYPES[t] || ''}`, e.count, e.first, e.last]; }).sort((a, b) => b[3] - a[3]) });
@@ -247,13 +264,15 @@ export function runEvtx(u8, f, ctx) {
 
 function parentChild(r, parent, img, cmd, note) {
   if (!parent || !img) return;
+  const exp = expectedParents(baseName(img));
+  const pn = baseName(parent).toLowerCase();
+  if (exp && pn && !exp.includes(pn) && exp.some(Boolean)) note(r, /^(lsass|services|wininit|smss)\.exe$/i.test(baseName(img)) ? 'critical' : 'high', `${baseName(img)} started by unexpected parent ${baseName(parent)}`, `Expected parent: ${exp.filter(Boolean).join(' or ')}. ${cmd || img}`, ['T1036.005', 'T1055'], 'Defense Evasion');
   if (OFFICE.test(parent) && SCRIPTY.test(img)) note(r, 'high', `Office application spawned ${baseName(img)}`, `${baseName(parent)} -> ${cmd || img}`, ['T1204.002', 'T1566.001'], 'Initial Access');
   else if (BROWSER.test(parent) && /\\(cmd|powershell|pwsh|wscript|cscript|mshta|rundll32|regsvr32)\.exe$/i.test(img)) note(r, 'high', `Browser spawned ${baseName(img)}`, `${baseName(parent)} -> ${cmd || img}`, ['T1189', 'T1204'], 'Initial Access');
   else if (/\\wmiprvse\.exe$/i.test(parent) && /\\(cmd|powershell|pwsh|rundll32|mshta)\.exe$/i.test(img)) note(r, 'high', `WMI provider host spawned ${baseName(img)} (remote WMI execution)`, cmd || img, ['T1047'], 'Lateral Movement');
   else if (/\\services\.exe$/i.test(parent) && /\\(cmd|powershell)\.exe$/i.test(img)) note(r, 'high', `services.exe spawned ${baseName(img)} (service-based execution)`, cmd || img, ['T1569.002'], 'Execution');
   else if (/\\(w3wp|httpd|nginx|tomcat\d*|php-cgi|sqlservr|java)\.exe$/i.test(parent) && /\\(cmd|powershell|pwsh|whoami|net1?|certutil|wscript|cscript)\.exe$/i.test(img)) note(r, 'critical', `Server process ${baseName(parent)} spawned ${baseName(img)} (web shell / SQL injection)`, cmd || img, ['T1505.003', 'T1190'], 'Persistence');
   else if (/\\(mshta|wscript|cscript|rundll32|regsvr32)\.exe$/i.test(parent) && /\\(powershell|pwsh|cmd)\.exe$/i.test(img)) note(r, 'medium', `${baseName(parent)} spawned ${baseName(img)}`, cmd || img, ['T1218'], 'Defense Evasion');
-  else if (/\\explorer\.exe$/i.test(parent) === false && /\\lsass\.exe$/i.test(img)) note(r, 'critical', 'lsass.exe started by unexpected parent', parent, ['T1036.005'], 'Defense Evasion');
 }
 
 function sysmon(r, d, f, ctx, note, ev) {
@@ -261,7 +280,7 @@ function sysmon(r, d, f, ctx, note, ev) {
   switch (id) {
     case 1: {
       ev(r, 'Process create', `${d.Image} ${d.CommandLine || ''} (parent ${d.ParentImage || ''})`);
-      const res = ctx.exec_({ path: d.Image, args: d.CommandLine, time: r.TimeCreated, tool: 'EvtxECmd', file: f.name, source: 'Sysmon 1', extraDetail: `parent ${d.ParentCommandLine || d.ParentImage || ''} | user ${d.User || ''}` });
+      const res = ctx.exec_({ path: d.Image, args: d.CommandLine, time: r.TimeCreated, tool: 'EvtxECmd', file: f.name, source: 'Sysmon 1', sha1: (String(d.Hashes || '').match(/SHA1=([0-9A-Fa-f]{40})/) || [])[1], extraDetail: `parent ${d.ParentCommandLine || d.ParentImage || ''} | user ${d.User || ''}` });
       parentChild(r, d.ParentImage, d.Image, d.CommandLine, note);
       if (d.OriginalFileName && d.Image && !/^-$|^\?$/.test(d.OriginalFileName)) {
         const on = d.OriginalFileName.toLowerCase().replace(/\.mui$/, ''), bn = baseName(d.Image).toLowerCase();

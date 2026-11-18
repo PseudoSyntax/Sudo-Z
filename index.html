@@ -14,7 +14,7 @@
   <div class="bar-meta">
     <span class="tag ok" title="Files are read with the File API and parsed in a Web Worker. No network requests are made with your data.">LOCAL ONLY / NO UPLOAD</span>
     <span class="tag" id="mode">BROWSER MODE</span>
-    <span class="tag" id="ver">v1.1.0</span>
+    <span class="tag" id="ver">v1.2.0</span>
     <span class="clock" id="clock">--:--:-- UTC</span>
   </div>
 </header>
@@ -68,16 +68,18 @@
   <section class="console">
     <nav class="tabs" id="tabs">
       <button data-tab="sitrep" class="on"><span>01</span>SITREP</button>
-      <button data-tab="findings"><span>02</span>FINDINGS <b id="n-findings"></b></button>
-      <button data-tab="indicators"><span>03</span>INDICATORS <b id="n-ind"></b></button>
-      <button data-tab="timeline"><span>04</span>TIMELINE <b id="n-tl"></b></button>
-      <button data-tab="artifacts"><span>05</span>ARTIFACTS <b id="n-art"></b></button>
-      <button data-tab="rejected"><span>06</span>REJECTED <b id="n-rej"></b></button>
-      <button data-tab="tools"><span>07</span>TOOLS</button>
+      <button data-tab="investigate"><span>02</span>INVESTIGATE <b id="n-leads"></b></button>
+      <button data-tab="findings"><span>03</span>FINDINGS <b id="n-findings"></b></button>
+      <button data-tab="indicators"><span>04</span>INDICATORS <b id="n-ind"></b></button>
+      <button data-tab="timeline"><span>05</span>TIMELINE <b id="n-tl"></b></button>
+      <button data-tab="artifacts"><span>06</span>ARTIFACTS <b id="n-art"></b></button>
+      <button data-tab="rejected"><span>07</span>REJECTED <b id="n-rej"></b></button>
+      <button data-tab="tools"><span>08</span>TOOLS</button>
       <div class="exports" id="exports" hidden>
         <span class="muted">EXPORT</span>
         <button data-exp="md">REPORT.MD</button>
         <button data-exp="json">JSON</button>
+        <button data-exp="leads">LEADS.CSV</button>
         <button data-exp="findings">FINDINGS.CSV</button>
         <button data-exp="ioc">IOC.CSV</button>
         <button data-exp="timeline">TIMELINE.CSV</button>

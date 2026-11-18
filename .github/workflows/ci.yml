@@ -32,6 +32,18 @@ jobs:
           if (!rep.indicators.some((i) => i.value === '45.77.12.9')) throw new Error('expected IP indicator');
           EOF
           node /tmp/smoke.mjs
+      - name: Process baseline catches lookalikes without false positives
+        run: |
+          cat > /tmp/look.mjs <<'EOF'
+          const { lookalike } = await import(process.cwd() + '/js/ioc/baseline.js');
+          const bad = ['scvhost.exe', 'svch0st.exe', 'lsas.exe', 'expl0rer.exe', 'svchost32.exe', 'svch\u043est.exe', 'dllhot.exe', 'csrsss.exe', 'rundl32.exe', 'winlogin.exe'];
+          const good = ['svchost.exe', 'taskhostw.exe', 'lsaiso.exe', 'osppsvc.exe', 'explorer.exe', 'chrome.exe', 'conhost.exe', 'searchhost.exe', 'notepad.exe', 'regedit.exe'];
+          const miss = bad.map((n) => JSON.parse(`"${n}"`)).filter((n) => !lookalike(n));
+          const fp = good.filter((n) => lookalike(n));
+          console.log('missed', miss, 'false positives', fp);
+          if (miss.length || fp.length) process.exit(1);
+          EOF
+          node /tmp/look.mjs
       - name: Local server compiles and enforces its guards
         run: |
           python3 -m py_compile tools/server.py

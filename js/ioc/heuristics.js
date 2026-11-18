@@ -1,3 +1,7 @@
+import { lookalike, wrongLocation, BASELINE } from './baseline.js';
+
+const CORE_IMITATED = new Set(['svchost.exe', 'lsass.exe', 'csrss.exe', 'smss.exe', 'services.exe', 'winlogon.exe', 'wininit.exe', 'explorer.exe', 'spoolsv.exe', 'taskhostw.exe', 'dllhost.exe', 'conhost.exe', 'rundll32.exe', 'lsm.exe', 'msmpeng.exe']);
+
 // Shared heuristics. Every artifact that yields an executable path or command
 // line runs through classifyPath / classifyCommand, so the same logic grades a
 // Prefetch entry, a Run key, a 4688 event or a Sysmon 1 event.
@@ -45,9 +49,6 @@ export const TOOL_NAMES = [
   { rx: /^(vssadmin|wbadmin|bcdedit|cipher)\.exe$/i, sev: 'low', label: 'backup/recovery utility' },
 ];
 
-// Names of system binaries that should only live in System32/SysWOW64/WinSxS.
-const SYSTEM_NAMES = new Set(['svchost.exe', 'lsass.exe', 'csrss.exe', 'smss.exe', 'wininit.exe', 'winlogon.exe', 'services.exe', 'spoolsv.exe', 'taskhost.exe', 'taskhostw.exe', 'conhost.exe', 'dllhost.exe', 'lsm.exe', 'rundll32.exe', 'regsvr32.exe', 'cmd.exe', 'powershell.exe', 'explorer.exe', 'searchindexer.exe', 'wmiprvse.exe', 'ctfmon.exe', 'dwm.exe', 'sihost.exe', 'runtimebroker.exe', 'mshta.exe', 'wscript.exe', 'cscript.exe', 'certutil.exe', 'notepad.exe', 'calc.exe']);
-const TYPO = /^(scvhost|svchosts|svch0st|svhost|svchost32|lsas|lsasss|lssas|isass|1sass|csrrs|crss|smsss|wininnit|winlogin|winlog0n|servics|spoolsvc|taskhosts|expl0rer|exploer|explorere|iexplorer|rundl32|rundll|regsrv32|powershel|powershell32)\.exe$/i;
 
 const EXEC_EXT = /\.(exe|dll|scr|com|pif|cpl|sys|ocx|bat|cmd|ps1|psm1|vbs|vbe|js|jse|wsf|wsh|hta|msi|msp|jar|lnk|iso|img|vhd|vhdx|one|chm|xll|appref-ms|application)$/i;
 const DECOY_DOUBLE = /\.(pdf|docx?|xlsx?|pptx?|txt|jpe?g|png|gif|zip|rar|mp4|mp3|csv|rtf)\.(exe|scr|com|pif|bat|cmd|js|jse|vbs|vbe|wsf|hta|lnk|ps1|msi|iso|img)$/i;
@@ -78,15 +79,20 @@ export function classifyPath(path) {
   for (const t of TOOL_NAMES) if (t.rx.test(name)) { out.tool = t.label; out.toolSev = t.sev; out.reasons.push(`file name matches ${t.label}`); out.score += { critical: 10, high: 6, medium: 3, low: 1 }[t.sev]; break; }
   if (DECOY_DOUBLE.test(name)) { out.score += 6; out.reasons.push('double extension decoy'); }
   if (/[\u202e\u200f]/.test(name)) { out.score += 8; out.reasons.push('right-to-left override in name'); }
-  if (TYPO.test(name)) { out.score += 8; out.reasons.push('typosquats a Windows system binary'); }
-  if (SYSTEM_NAMES.has(name) && /^(?:[a-z]:|\\device\\harddiskvolume\d+|\\volume\{[^}]+\}|%\w+%)?\\/i.test(p) &&
-    !/\\windows\\(system32|syswow64|winsxs|servicing|softwaredistribution|prefetch|\$|ccmcache|ccm\\|temp\\[^\\]*\\(amd64|x86)|microsoft\.net|immersivecontrolpanel|systemapps)|\\windows\\explorer\.exe$|\\windows\\notepad\.exe$|\\windows\\(regedit|hh)\.exe$|\\windows\\splwow64\.exe$/i.test(p) && /\\/.test(p)) {
-    out.score += 7; out.reasons.push(`${name} outside System32 (masquerading)`);
+  let look = lookalike(baseName(p));
+  // Inside System32 / SysWOW64 many genuine files sit one edit away from others (nwscript.exe, wuauclt1.exe on XP).
+  // There, only lookalikes of the core processes attackers imitate are flagged; homoglyph / padding tricks always are.
+  if (look && (look.kind === 'typo' || look.kind === 'suffix') && /\\windows\\(system32|syswow64|winsxs)\\/i.test(p) && !CORE_IMITATED.has(look.target)) look = null;
+  if (look) { out.score += look.kind === 'homoglyph' ? 12 : 8; out.reasons.push(`lookalike of ${look.target}: ${look.detail}`); out.lookalike = look; }
+  const wl = wrongLocation(p);
+  if (wl) {
+    const core = BASELINE[wl.name].dirs.includes('sys') || BASELINE[wl.name].dirs.includes('win');
+    out.score += core ? 7 : 3; out.reasons.push(`${wl.name} (${wl.desc}) outside its normal folder (${wl.expected})`); out.wrongLocation = wl;
   }
   if (/^[a-f0-9]{8,}\.exe$|^[a-z]{1,2}\.exe$|^\d+\.exe$/i.test(name)) { out.score += 2; out.reasons.push('random/short executable name'); }
   if (/\.(exe|dll|scr)$/i.test(name) && /\\[^\\]*(update|patch|crack|keygen|activator|kms)[^\\]*\.exe$/i.test(p) && /temp|downloads|public/i.test(p)) { out.score += 2; out.reasons.push('update/crack themed executable in user-writable path'); }
   out.sev = out.score >= 8 ? 'high' : out.score >= 5 ? 'medium' : out.score >= 3 ? 'low' : null;
-  if (out.toolSev === 'critical') out.sev = 'critical';
+  if (out.toolSev === 'critical' || out.lookalike?.kind === 'homoglyph') out.sev = 'critical';
   else if (out.toolSev === 'high' && out.sev !== 'critical') out.sev = 'high';
   return out;
 }

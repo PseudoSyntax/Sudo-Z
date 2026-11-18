@@ -220,3 +220,10 @@ pre.ev { margin: 4px 0 0; padding: 6px 8px; background: #050605; border: 1px sol
 .localbox .job .ok { color: var(--green); } .localbox .job .bad { color: var(--high); }
 .localbox .hint { color: var(--dim); font-size: 11px; margin-top: 4px; }
 .tag.home { border-color: var(--amber-d); color: var(--amber); }
+
+/* investigate */
+.lead .hd .kind { color: var(--amber); font-size: 10px; letter-spacing: .08em; margin-right: 6px; }
+.fd .bd .next { color: var(--amber); }
+.box .ph .more { position: absolute; right: 8px; color: var(--amber); text-decoration: none; font-size: 11px; }
+.box h4 { margin: 10px 0 4px; font-size: 11px; color: var(--dim); letter-spacing: .1em; font-weight: 400; }
+table.rel { margin-top: 6px; font-size: 11px; }

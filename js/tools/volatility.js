@@ -7,6 +7,7 @@ import { classifyPath, classifyCommand, baseName, isLolbin } from '../ioc/heuris
 import { isPrivateIp } from '../ioc/indicators.js';
 import { KEYWORD_RULES } from '../core/strings.js';
 import { utf8 } from '../core/bytes.js';
+import { expectedParents, isSingleton, BASELINE } from '../ioc/baseline.js';
 
 const T = (title, columns, rows, note) => ({ title, columns, rows, note });
 
@@ -64,8 +65,6 @@ export function identifyPlugin(name, rows) {
   return 'volatility (unknown plugin)';
 }
 
-const SYSTEM_PARENTS = { 'smss.exe': ['system', 'smss.exe'], 'csrss.exe': ['smss.exe', null], 'wininit.exe': ['smss.exe', null], 'winlogon.exe': ['smss.exe', null], 'services.exe': ['wininit.exe'], 'lsass.exe': ['wininit.exe'], 'lsaiso.exe': ['wininit.exe'], 'svchost.exe': ['services.exe', 'msmpeng.exe', 'svchost.exe'], 'taskhostw.exe': ['svchost.exe'], 'runtimebroker.exe': ['svchost.exe'], 'userinit.exe': ['winlogon.exe', 'dwm.exe'] };
-const SINGLETON = ['lsass.exe', 'services.exe', 'wininit.exe', 'lsaiso.exe'];
 
 function procName(r) { return String(r.ImageFileName || r.Process || r.Name || '').toLowerCase(); }
 
@@ -217,13 +216,13 @@ function processRules(list, extra, file, ctx) {
     if (path || r.Cmd) ctx.exec_({ path: path || r.ImageFileName, args: r.Cmd && r.Cmd !== path ? r.Cmd : '', time: r.CreateTime, tool: 'Volatility 3', file, source: 'Memory process' });
     else if (!seenName.has(n)) { seenName.add(n); const pc = classifyPath(r.ImageFileName); if (pc.tool) note(pc.toolSev === 'critical' ? 'critical' : 'high', `${pc.tool} process: ${r.ImageFileName} (PID ${r.PID})`, '', r.ImageFileName, ['T1059'], 'Memory', r.CreateTime); }
     const parent = byPid.get(r.PPID); const pn = parent ? procName(parent) : null;
-    const exp = SYSTEM_PARENTS[n];
+    const exp = expectedParents(n);
     if (exp && parent && !exp.includes(pn) && !r.ExitTime) note(n === 'lsass.exe' || n === 'services.exe' ? 'critical' : 'high', `${r.ImageFileName} (PID ${r.PID}) has unexpected parent ${parent.ImageFileName} (PID ${r.PPID})`, `Expected parent: ${exp.filter(Boolean).join(' or ')}`, '', ['T1036.005', 'T1055'], 'Memory', r.CreateTime);
     if (pn && /^(winword|excel|powerpnt|outlook|msaccess|onenote|eqnedt32)\.exe$/.test(pn) && /^(cmd|powershell|pwsh|wscript|cscript|mshta|rundll32|regsvr32|certutil)\.exe$/.test(n)) note('high', `Office process ${parent.ImageFileName} spawned ${r.ImageFileName} (PID ${r.PID})`, '', r.Cmd || '', ['T1204.002', 'T1566.001'], 'Initial Access', r.CreateTime);
     if (pn && /^(w3wp|httpd|nginx|tomcat\d*|php-cgi|sqlservr|java)\.exe$/.test(pn) && /^(cmd|powershell|pwsh|whoami|net|net1|certutil)\.exe$/.test(n)) note('critical', `Server process ${parent.ImageFileName} spawned ${r.ImageFileName} (web shell?)`, `PID ${r.PID}`, r.Cmd || '', ['T1505.003'], 'Persistence', r.CreateTime);
     if (pn === 'wmiprvse.exe' && /^(cmd|powershell|pwsh|rundll32|mshta)\.exe$/.test(n)) note('high', `WmiPrvSE spawned ${r.ImageFileName} (remote WMI execution)`, `PID ${r.PID}`, r.Cmd || '', ['T1047'], 'Lateral Movement', r.CreateTime);
   }
-  for (const s of SINGLETON) if ((counts[s] || 0) > 1) note('critical', `${counts[s]} running instances of ${s}`, 'Only one instance should exist. Extra copies are a masquerading indicator.', all.filter((r) => procName(r) === s).map((r) => `PID ${r.PID} PPID ${r.PPID} ${r.CreateTime || ''}`).join('\n'), ['T1036.005']);
+  for (const s of Object.keys(BASELINE).filter(isSingleton)) if ((counts[s] || 0) > 1) note('critical', `${counts[s]} running instances of ${s}`, 'Only one instance should exist. Extra copies are a masquerading indicator.', all.filter((r) => procName(r) === s).map((r) => `PID ${r.PID} PPID ${r.PPID} ${r.CreateTime || ''}`).join('\n'), ['T1036.005']);
 }
 
 export function finalizeVol(shared, ctx) {
