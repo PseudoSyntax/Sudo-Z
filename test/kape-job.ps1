@@ -25,7 +25,8 @@ class K { static int Main(string[] a) {
 Set-Content (Join-Path $t 'k.cs') $cs
 $csc = Get-ChildItem "$env:WINDIR\Microsoft.NET\Framework64" -Recurse -Filter csc.exe | Sort-Object FullName -Descending | Select-Object -First 1
 New-Item -ItemType Directory -Force -Path (Join-Path $t 'kape') | Out-Null
-& $csc.FullName /nologo /out:(Join-Path $t 'kape\kape.exe') (Join-Path $t 'k.cs')
+$exe = Join-Path $t 'kape\kape.exe'
+& $csc.FullName /nologo "/out:$exe" (Join-Path $t 'k.cs')
 if (-not (Test-Path (Join-Path $t 'kape\kape.exe'))) { throw 'stand-in kape.exe did not build' }
 
 # 2. a small NTFS VHDX holding an exported event log
