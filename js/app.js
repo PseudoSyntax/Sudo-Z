@@ -1,6 +1,8 @@
 // Sudo-Z UI controller.
 import { CATALOG, NOT_ACCEPTED_HELP, availability } from './catalog.js';
-import { markdown, csv, timelineCsv, findingsCsv, indicatorsCsv, leadsCsv, mitreSummary, indicatorLabel, defang } from './report.js';
+import { markdown, csv, timelineCsv, findingsCsv, indicatorsCsv, leadsCsv, programsCsv, mitreSummary, indicatorLabel, defang } from './report.js';
+import { Grid, datasets } from './grid.js';
+import { PROGRAM_COLUMNS } from './ioc/programs.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (v) => {
@@ -14,7 +16,7 @@ const SEVS = ['critical', 'high', 'medium', 'low', 'info'];
 const SEV_SHORT = { critical: 'CRIT', high: 'HIGH', medium: 'MED', low: 'LOW', info: 'INFO' };
 const isTimeCol = (c) => /time|created|modified|accessed|last|first|start|end|deleted|write|logon|run|when|date|visit/i.test(c);
 
-const S = { staged: [], rep: null, tab: 'sitrep', f: { sev: new Set(['critical', 'high', 'medium', 'low', 'info']), q: '', cat: '' }, tl: { q: '', tool: '', page: 0 }, ind: { q: '', type: '', defang: true }, art: { q: '' }, inv: { q: '' } };
+const S = { staged: [], rep: null, tab: 'sitrep', f: { sev: new Set(['critical', 'high', 'medium', 'low', 'info']), q: '', cat: '' }, tl: { q: '', tool: '', page: 0 }, ind: { q: '', type: '', defang: true }, art: { q: '' }, inv: { q: '' }, grid: { ds: null, tagsBy: {}, widthsBy: {}, q: '', filters: {}, hidden: new Set(), collapsed: new Set(), group: -1 } };
 
 // ---------------------------------------------------------------- clock
 setInterval(() => { $('#clock').textContent = new Date().toISOString().slice(11, 19) + ' UTC'; }, 1000);
@@ -101,6 +103,7 @@ $('#exports').addEventListener('click', (e) => {
     md: () => [markdown(S.rep, { defanged: S.ind.defang }), `sudo-z_report_${stamp}.md`, 'text/markdown'],
     json: () => [JSON.stringify(S.rep, (k, v) => (typeof v === 'bigint' ? v.toString() : v instanceof Uint8Array ? Array.from(v.subarray(0, 512), (x) => x.toString(16).padStart(2, '0')).join('') : v), 1), `sudo-z_report_${stamp}.json`, 'application/json'],
     findings: () => [findingsCsv(S.rep), `sudo-z_findings_${stamp}.csv`, 'text/csv'],
+    programs: () => [programsCsv(S.rep), `sudo-z_programs_${stamp}.csv`, 'text/csv'],
     leads: () => [leadsCsv(S.rep), `sudo-z_leads_${stamp}.csv`, 'text/csv'],
     ioc: () => [indicatorsCsv(S.rep), `sudo-z_ioc_${stamp}.csv`, 'text/csv'],
     timeline: () => [timelineCsv(S.rep), `sudo-z_timeline_${stamp}.csv`, 'text/csv'],
@@ -114,7 +117,7 @@ function download(data, name, type) {
 
 function onReport() {
   const r = S.rep;
-  $('#n-leads').textContent = (r.leads || []).length; $('#n-findings').textContent = r.findings.length; $('#n-ind').textContent = r.indicators.length; $('#n-tl').textContent = r.timeline.length;
+  $('#n-leads').textContent = (r.leads || []).length; $('#n-prog').textContent = (r.programs || []).length || ''; S.grid.ds = null; S.gridWant = null; S.grid.tagsBy = {}; S.grid.widthsBy = {}; $('#n-findings').textContent = r.findings.length; $('#n-ind').textContent = r.indicators.length; $('#n-tl').textContent = r.timeline.length;
   $('#n-art').textContent = r.files.filter((f) => f.status !== 'rejected').length; $('#n-rej').textContent = r.files.filter((f) => f.status === 'rejected' || f.status === 'partial').length;
   $('#exports').hidden = false;
   S.tab = 'sitrep'; [...$('#tabs').querySelectorAll('button[data-tab]')].forEach((x) => x.classList.toggle('on', x.dataset.tab === 'sitrep'));
@@ -125,7 +128,7 @@ function render() {
   const v = $('#view');
   if (S.tab === 'tools') return (v.innerHTML = toolsView());
   if (!S.rep) return (v.innerHTML = idleView());
-  ({ sitrep: sitrepView, investigate: investigateView, findings: findingsView, indicators: indicatorsView, timeline: timelineView, artifacts: artifactsView, rejected: rejectedView })[S.tab](v);
+  ({ sitrep: sitrepView, investigate: investigateView, grid: gridView, findings: findingsView, indicators: indicatorsView, timeline: timelineView, artifacts: artifactsView, rejected: rejectedView })[S.tab](v);
 }
 
 // ---------------------------------------------------------------- idle
@@ -169,12 +172,14 @@ function sitrepView(v) {
     </div>
     <div>
       <div class="box"><div class="ph"><span class="code">L</span> LEADS TO INVESTIGATE <a class="more" href="#" data-go="investigate">ALL ${(r.leads || []).length} &gt;</a></div><div class="body">${(r.leads || []).length ? r.leads.slice(0, 6).map((l, i) => leadRow(l, i, true)).join('') : '<span class="muted">No correlated leads. Check FINDINGS for single-artifact hits.</span>'}</div></div>
+      ${progBox(r)}
       <div class="box"><div class="ph"><span class="code">E</span> PRIORITY FINDINGS</div><div class="body">${top.length ? top.map(findingRow).join('') : '<span class="muted">No high or critical findings.</span>'}</div></div>
       <div class="box"><div class="ph"><span class="code">F</span> COVERAGE</div><div class="body">${coverage(r)}</div></div>
     </div>
   </div>`;
   v.querySelectorAll('.kpi').forEach((k) => k.addEventListener('click', () => { S.f.sev = new Set([k.dataset.sev]); switchTab('findings'); }));
   v.querySelectorAll('[data-go]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); switchTab(a.dataset.go); }));
+  v.querySelectorAll('[data-prog]').forEach((a) => a.addEventListener('click', () => { openGrid('programs', { q: '', filters: { 2: '=' + a.dataset.prog } }); }));
   bindLeads(v);
   v.querySelectorAll('[data-ind]').forEach((k) => k.addEventListener('click', () => { S.ind.type = k.dataset.ind; switchTab('indicators'); }));
   bindFindings(v);
@@ -210,6 +215,36 @@ function findingsView(v) {
   const q = $('#fq'); q.addEventListener('input', debounce(() => { S.f.q = q.value; findingsView(v); $('#fq').focus(); $('#fq').setSelectionRange(q.value.length, q.value.length); }, 250));
   $('#fexp').addEventListener('click', () => { const open = !v.querySelector('.fd.open'); v.querySelectorAll('.fd').forEach((f) => f.classList.toggle('open', open)); });
   bindFindings(v);
+}
+
+// ---------------------------------------------------------------- GRID (Timeline Explorer style)
+function progBox(r) {
+  const top = (r.programs || []).filter((p) => p.risk >= 25).slice(0, 8);
+  const uns = (r.programs || []).filter((p) => p.signState === 'unsigned' || p.signState === 'invalid').length;
+  return `<div class="box"><div class="ph"><span class="code">P</span> PROGRAMS TO REVIEW <a class="more" href="#" data-go="grid">GRID ${(r.programs || []).length} &gt;</a></div><div class="body">
+    ${top.length ? `<table class="t prog"><tr><th>RISK</th><th>PROGRAM</th><th>SIGNATURE</th><th>WHERE</th><th>WHY</th></tr>${top.map((p) => `<tr data-prog="${esc(p.name)}" class="sv-${p.level}"><td class="num"><span class="sev ${p.level}">${p.risk}</span></td><td>${esc(p.name)}</td><td class="${p.signState}">${esc(p.signature.slice(0, 40))}</td><td>${esc(p.location)}</td><td class="muted">${esc(p.reasons.slice(0, 90))}</td></tr>`).join('')}</table>` : '<span class="muted">No program scored 25 or more.</span>'}
+    <div class="fine">${uns} unsigned or invalid-signature binaries. Signature data comes from Sysmon 6/7, Autoruns, Sigcheck, Amcache and the PE files themselves.</div></div></div>`;
+}
+const PROG_CHIPS = [['ALL', {}], ['RISK ≥ 45', { 0: '>=45' }], ['UNSIGNED', { 3: '/^(unsigned|signature not valid)/' }], ['USER-WRITABLE', { 4: '=User-writable' }], ['PERSISTS', { 10: '/./' }], ['HAS FINDINGS', { 11: '>0' }], ['LOLBINS', { 2: '/^(powershell|pwsh|cmd|rundll32|regsvr32|mshta|wscript|cscript|certutil|bitsadmin|msiexec|wmic|msbuild|installutil)\\.exe$/' }]];
+let GRID = null;
+function openGrid(id, preset) {
+  S.gridWant = id;
+  if (preset) Object.assign(S.grid, { ds: id, q: preset.q || '', filters: { ...preset.filters }, sort: null, group: -1, hidden: new Set(), collapsed: new Set(), sel: null, tagOnly: false });
+  switchTab('grid');
+}
+function gridView(v) {
+  const all = datasets(S.rep, PROGRAM_COLUMNS);
+  const want = S.gridWant || S.grid.ds;
+  const id = want && all.some((d) => d.id === want) ? want : all[0].id;
+  const groups = [...new Set(all.map((d) => d.group))];
+  v.innerHTML = `<div class="toolbar g-pick"><select id="gds">${groups.map((g) => `<optgroup label="${esc(g)}">${all.filter((d) => d.group === g).map((d) => `<option value="${esc(d.id)}" ${d.id === id ? 'selected' : ''}>${esc(d.label)}</option>`).join('')}</optgroup>`).join('')}</select>
+    ${id === 'programs' ? `<span class="chips">${PROG_CHIPS.map(([l, f], i) => `<button class="tog ${JSON.stringify(f) === JSON.stringify(S.grid.filters || {}) ? 'on' : ''}" data-chip="${i}">${l}</button>`).join('')}</span>` : ''}
+    <span class="count">click a header to sort · type under it to filter · tag rows with □</span></div><div id="grid" class="dgrid"></div>`;
+  const ds = all.find((d) => d.id === id);
+  GRID = new Grid($('#grid'), S.grid, { onPivot: (q) => { S.inv.q = q; switchTab('investigate'); } });
+  GRID.open(ds);
+  $('#gds').addEventListener('change', (e) => { S.gridWant = e.target.value; gridView(v); });
+  v.querySelectorAll('[data-chip]').forEach((b) => b.addEventListener('click', () => { S.grid.filters = { ...PROG_CHIPS[+b.dataset.chip][1] }; S.grid.q = ''; gridView(v); }));
 }
 
 // ---------------------------------------------------------------- INVESTIGATE
@@ -454,7 +489,7 @@ async function pollJobs() {
     const src = String(j.source || '').split(/[\\/]/).filter(Boolean).pop() || j.source || '';
     const st = j.status === 'running' ? 'RUN' : j.status === 'done' ? 'DONE' : 'FAIL';
     const pct = j.total ? Math.round((j.done / j.total) * 100) : null;
-    const loadable = j.status === 'done' && (j.kind === 'vol3' || j.kind === 'kape');
+    const loadable = j.status === 'done' && (j.kind === 'vol3' || j.kind === 'kape' || j.kind === 'ez');
     return `<div class="jb ${j.status}"><div class="r"><span><b>${esc(j.kind.toUpperCase())}</b> ${esc(src)}</span><span class="st">${st}${j.status === 'running' && pct != null ? ' ' + pct + '%' : ''} · ${ago(j.started)}</span></div>
       ${j.status === 'running' ? `<div class="bar"><span style="width:${pct ?? 30}%" class="${pct == null ? 'ind' : ''}"></span></div><div class="cur">${esc(j.current || '')}</div>` : ''}
       ${j.error ? `<div class="bad">${esc(j.error)}</div>` : ''}
@@ -463,7 +498,7 @@ async function pollJobs() {
   el.querySelectorAll('[data-load]').forEach((b) => b.addEventListener('click', () => loadJob(b.dataset.load)));
   el.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => api('/api/open', { job: b.dataset.open }).catch((e) => { LOCAL.flash = e.message; pollJobs(); })));
   // auto-load jobs started from this page when they finish
-  for (const j of jobs) if (LOCAL.auto && LOCAL.mine.has(j.id) && j.status === 'done' && !LOCAL.loaded.has(j.id) && (j.kind === 'vol3' || j.kind === 'kape')) loadJob(j.id);
+  for (const j of jobs) if (LOCAL.auto && LOCAL.mine.has(j.id) && j.status === 'done' && !LOCAL.loaded.has(j.id) && (j.kind === 'vol3' || j.kind === 'kape' || j.kind === 'ez')) loadJob(j.id);
   if (jobs.some((j) => j.status === 'running')) LOCAL.timer = setTimeout(pollJobs, 1500);
 }
 
@@ -473,14 +508,17 @@ async function loadJob(id) {
   try {
     const job = await api(`/api/job/${id}`);
     const files = []; let skipped = 0;
-    for (const r of job.results) {
+    // EZ runner and KAPE !EZParser output: the CSVs Timeline Explorer would open
+    const list = job.kind === 'ez' ? job.results.flatMap((r) => (r.files || []).filter((x) => /\.csv$/i.test(x)).map((file) => ({ file, csv: true })))
+      : [...job.results, ...(job.modules || []).map((file) => ({ file, csv: true }))];
+    for (const r of list) {
       if (!r.file) continue;
       if (r.size > 1.5 * 1024 ** 3) { skipped++; continue; }
-      LOCAL.flash = `loading ${job.kind} output ${files.length + 1}/${job.results.length}`; $('#jobs .flash') && ($('#jobs .flash').textContent = LOCAL.flash);
+      LOCAL.flash = `loading ${job.kind} output ${files.length + 1}/${list.length}`; $('#jobs .flash') && ($('#jobs .flash').textContent = LOCAL.flash);
       const res = await fetch(`/api/job/${id}/file/${r.file.split('/').map(encodeURIComponent).join('/')}`, { headers: { 'X-Sudo-Z': '1' } });
       if (!res.ok) continue;
       const blob = await res.blob(); if (blob.size <= 4) continue;
-      const name = job.kind === 'vol3' ? `memory/${r.file}` : `kape/${r.file.replace(/^tout\//, '')}`;
+      const name = job.kind === 'vol3' ? `memory/${r.file}` : r.csv ? `ezcsv/${r.file.replace(/^mout\//, '')}` : `kape/${r.file.replace(/^tout\//, '')}`;
       files.push({ file: new File([blob], name.split('/').pop()), name });
     }
     LOCAL.flash = `${files.length} file(s) from ${job.kind} staged${skipped ? `, ${skipped} over 1.5 GB skipped` : ''}`;

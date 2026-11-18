@@ -56,6 +56,13 @@ jobs:
           dir=$(python -c "import json,sys;print(json.load(open(sys.argv[1]))['dir'])" "$RUNNER_TEMP/ezjob.json")
           node test/compare-ez.mjs "$dir" "$RUNNER_TEMP/szout/report.json" | tee -a "$GITHUB_STEP_SUMMARY"
           cp -r "$dir" "$RUNNER_TEMP/ez-output"
+      - name: Sudo-Z on the EZ tools' CSV output (Timeline Explorer import)
+        if: always()
+        shell: bash
+        run: |
+          dir=$(python -c "import json,sys;print(json.load(open(sys.argv[1]))['dir'])" "$RUNNER_TEMP/ezjob.json")
+          node cli/sudo-z.mjs "$dir" -o "$RUNNER_TEMP/csvout"
+          node test/compare-csv.mjs "$RUNNER_TEMP/szout/report.json" "$RUNNER_TEMP/csvout/report.json" | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

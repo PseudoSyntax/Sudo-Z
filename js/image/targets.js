@@ -30,6 +30,8 @@ export const TARGETS = [
   ['WebCache', new RegExp(`^${U}/appdata/local/microsoft/windows/webcache/webcachev01\\.dat$`)],
   ['Windows Timeline', new RegExp(`^${U}/appdata/local/connecteddevicesplatform/[^/]+/activitiescache\\.db(-wal)?$`)],
   ['Recycle Bin', /^(\$recycle\.bin\/[^/]+\/\$i[^/]+|recycler\/[^/]+\/info2)$/],
+  // programs sitting where programs should not live: hashed, signature-checked and graded
+  ['Executables in user-writable folders', /^((users|documents and settings)\/[^/]+\/.+\.(exe|scr|com|cpl|pif)|(users|documents and settings)\/[^/]+\/appdata\/(local|roaming|locallow)\/[^/]+\.(dll|exe)|programdata\/[^/]+\.(exe|dll|scr)|programdata\/(?!microsoft\/|package cache\/|chocolatey\/)[^/]+\/[^/]+\.(exe|dll)|windows\/temp\/.+\.(exe|dll|scr|sys)|users\/public\/.+\.(exe|dll|scr)|perflogs\/.+\.(exe|dll)|\$recycle\.bin\/[^/]+\/\$r[^/]+\.(exe|dll|scr))$/, { max: 64 * 1024 ** 2, limit: 400, budget: 1024 ** 3, last: true }],
   ['Defender logs', /^programdata\/microsoft\/windows defender\/support\/mplog-[^/]+\.log$/],
 ];
 
@@ -49,7 +51,8 @@ export function selectTargets(ntfs) {
       break;
     }
   }
-  return picks;
+  // low-priority groups (executables) go last so the core artifacts always fit the size budget
+  return [...picks.filter((p) => !p.opts.last), ...picks.filter((p) => p.opts.last)];
 }
 
 export { TOTAL_CAP, FILE_CAP };

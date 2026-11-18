@@ -23,6 +23,9 @@ export const indicatorsCsv = (rep) => csv(['Type', 'Value', 'Count', 'Sources', 
 
 export const leadsCsv = (rep) => csv(['Severity', 'Kind', 'Category', 'Title', 'Why', 'Next', 'MITRE', 'Entities', 'Evidence'], (rep.leads || []).map((l) => [l.sev, l.kind, l.category || '', l.title, l.why || '', l.next || '', (l.mitre || []).join(' '), (l.entities || []).join(' | '), l.evidence || '']));
 
+const PCOLS = [['risk', 'Risk'], ['level', 'Level'], ['name', 'Program'], ['signature', 'Signature'], ['location', 'Location'], ['path', 'Path'], ['firstSeen', 'FirstSeen'], ['lastSeen', 'LastSeen'], ['runs', 'Runs'], ['sources', 'SeenBy'], ['persistence', 'Persistence'], ['findings', 'Findings'], ['topFinding', 'TopFinding'], ['reasons', 'Why'], ['sha1', 'SHA1'], ['signer', 'SignerOrPublisher'], ['args', 'CommandLines']];
+export const programsCsv = (rep) => csv(PCOLS.map((c) => c[1]), (rep.programs || []).map((p) => PCOLS.map((c) => p[c[0]] ?? '')));
+
 export function mitreSummary(rep) {
   const m = new Map();
   for (const f of rep.findings) for (const t of f.mitre || []) { if (!t) continue; const e = m.get(t) || { id: t, count: 0, worst: 'info' }; e.count++; if (rank(f.sev) > rank(e.worst)) e.worst = f.sev; m.set(t, e); }
@@ -60,6 +63,13 @@ export function markdown(rep, { defanged = true } = {}) {
       if (l.related?.length) { L.push('', `Related events (${l.related.length}, first 20):`, ''); for (const e of l.related.slice(0, 20)) L.push(`- ${e.time} ${e.tool} ${e.type}: ${d(String(e.desc || '').slice(0, 200))}`); }
       L.push('');
     });
+  }
+  const progs = (rep.programs || []).filter((p) => p.risk >= 25);
+  if (progs.length) {
+    L.push('## Programs to review', '', 'Every program seen in any artifact, scored on location, signature, persistence, name tricks and linked findings. Full list in programs.csv / the GRID tab.', '');
+    L.push('| Risk | Program | Signature | Location | First seen | Seen by | Why |', '|---|---|---|---|---|---|---|');
+    for (const p of progs.slice(0, 60)) L.push(`| ${p.risk} | ${p.name} | ${p.signature} | ${p.location} | ${p.firstSeen} | ${p.sources} | ${d(p.reasons).replace(/\|/g, '/')} |`);
+    L.push('');
   }
   L.push('## Findings', '');
   for (const sev of ['critical', 'high', 'medium', 'low']) {

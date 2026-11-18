@@ -18,8 +18,10 @@ const LSASS_ACCESS = /^0x(1010|1410|1418|1438|143a|1f0fff|1fffff|1f1fff|1f3fff|4
 const r0 = (t) => (t ? String(t).slice(0, 19).replace('T', ' ') : '?');
 const ip = (v) => (v && v !== '-' && v !== '::1' && v !== '127.0.0.1' && !/^fe80/i.test(v) ? v : null);
 
-export function runEvtx(u8, f, ctx) {
-  const parsed = parseEvtx(u8);
+export function runEvtx(u8, f, ctx) { return gradeEvtx(parseEvtx(u8), f, ctx); }
+
+/** Grade already-decoded records ({records, errors, chunks, ...}); shared by .evtx files and EvtxECmd CSV output. */
+export function gradeEvtx(parsed, f, ctx) {
   const recs = parsed.records;
   const notable = [];
   const logons = new Map(); // user|ip|type -> {count, first, last}
@@ -298,8 +300,10 @@ function sysmon(r, d, f, ctx, note, ev) {
       if (/^(4444|1337|31337|8888|9001|9050|6667|5555)$/.test(port) && d.Initiated === 'true') note(r, 'medium', `Connection to suspicious port ${port}`, `${d.Image} -> ${dst}`, ['T1571'], 'Command and Control');
       break;
     }
-    case 6: if (d.Signed === 'false' || /\\(temp|users)\\/i.test(d.ImageLoaded || '')) note(r, 'high', 'Driver loaded unsigned / from user path', d.ImageLoaded, ['T1014'], 'Defense Evasion'); break;
-    case 7: if ((d.Signed === 'false' && /\\(temp|users\\public|appdata|programdata)\\/i.test(d.ImageLoaded || '')) || /\\(dbghelp|dbgcore)\.dll$/i.test(d.ImageLoaded || '') && /\\(rundll32|powershell|cmd|wmic)\.exe$/i.test(d.Image || '')) note(r, 'medium', `Suspicious module load into ${baseName(d.Image)}`, `${d.ImageLoaded} signed=${d.Signed}`, ['T1574.002'], 'Defense Evasion'); break;
+    case 6: ctx.sign({ path: d.ImageLoaded, sha1: (String(d.Hashes || '').match(/SHA1=([0-9A-Fa-f]{40})/) || [])[1], signed: d.Signed === 'true' ? true : d.Signed === 'false' ? false : null, verified: /^valid$/i.test(d.SignatureStatus || '') ? true : d.SignatureStatus ? false : null, signer: d.Signature, status: d.SignatureStatus, kind: 'driver', source: 'Sysmon 6', file: f.name, time: r.TimeCreated, host: r.Computer });
+      if (d.Signed === 'false' || /\\(temp|users)\\/i.test(d.ImageLoaded || '')) note(r, 'high', 'Driver loaded unsigned / from user path', d.ImageLoaded, ['T1014'], 'Defense Evasion'); break;
+    case 7: ctx.sign({ path: d.ImageLoaded, sha1: (String(d.Hashes || '').match(/SHA1=([0-9A-Fa-f]{40})/) || [])[1], signed: d.Signed === 'true' ? true : d.Signed === 'false' ? false : null, verified: /^valid$/i.test(d.SignatureStatus || '') ? true : d.SignatureStatus ? false : null, signer: d.Signature, status: d.SignatureStatus, kind: 'dll', source: `Sysmon 7 (loaded by ${baseName(d.Image || '')})`, file: f.name, time: r.TimeCreated, host: r.Computer });
+      if ((d.Signed === 'false' && /\\(temp|users\\public|appdata|programdata)\\/i.test(d.ImageLoaded || '')) || /\\(dbghelp|dbgcore)\.dll$/i.test(d.ImageLoaded || '') && /\\(rundll32|powershell|cmd|wmic)\.exe$/i.test(d.Image || '')) note(r, 'medium', `Suspicious module load into ${baseName(d.Image)}`, `${d.ImageLoaded} signed=${d.Signed}`, ['T1574.002'], 'Defense Evasion'); break;
     case 8: note(r, 'high', `CreateRemoteThread into ${baseName(d.TargetImage)}`, `${d.SourceImage} -> ${d.TargetImage} StartFunction ${d.StartFunction || ''}`, ['T1055'], 'Defense Evasion'); break;
     case 10: {
       if (/\\lsass\.exe$/i.test(d.TargetImage || '') && !/\\(wininit|csrss|services|svchost|lsm|msmpeng|mrt|wmiprvse|taskmgr|vmtoolsd|sense\w*|mssense|csfalcon\w*|cyserver|sentinel\w*|cb|repux|elastic-agent|osqueryd|procexp64?)\.exe$/i.test(d.SourceImage || '') && LSASS_ACCESS.test(d.GrantedAccess || '')) note(r, 'critical', `LSASS memory access by ${baseName(d.SourceImage)}`, `GrantedAccess ${d.GrantedAccess} CallTrace ${(d.CallTrace || '').slice(0, 200)}`, ['T1003.001'], 'Credential Access');
