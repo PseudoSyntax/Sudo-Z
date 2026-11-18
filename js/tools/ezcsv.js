@@ -6,6 +6,7 @@
 import { gradeEvtx } from './evtx.js';
 import { classifyPath, classifyCommand, baseName, maxSev } from '../ioc/heuristics.js';
 import { utf8 } from '../core/bytes.js';
+import { MFT_ALL_COLS } from './artifacts.js';
 
 const T = (title, columns, rows, note) => ({ title, columns, rows, note });
 const MAX_ROWS = 500000;
@@ -211,11 +212,16 @@ export function runEzCsv(u8, f, ctx, kind, shared) {
     }
     case 'mft': {
       const cE = col('EntryNumber'), cSeq = col('SequenceNumber'), cU = col('InUse'), cPP = col('ParentPath'), cN = col('FileName'), cD = col('IsDirectory'), cSz = col('FileSize'), cSi = col('SI<FN'), cUs = col('uSecZeros'), cCr = col('Created0x10'), cCrF = col('Created0x30'), cZ = col('ZoneIdContents'), cAds = col('IsAds');
+      const cM = col('LastModified0x10'), cMF = col('LastModified0x30'), cC = col('LastRecordChange0x10'), cCF = col('LastRecordChange0x30'), cA = col('LastAccess0x10'), cAF = col('LastAccess0x30'), cCp = col('Copied');
+      const all = [];
       const mrows = []; const flagged = []; const stomped = [];
       for (const r of rows) {
         if (truthy(get(r, cAds))) continue;
         const name = get(r, cN), pp = get(r, cPP), dir = truthy(get(r, cD));
-        mrows.push({ entry: +get(r, cE), seq: +get(r, cSeq), inUse: truthy(get(r, cU)), isDir: dir, parentPath: pp, name, size: +get(r, cSz) || 0, ads: [] });
+        const si = { created: iso(get(r, cCr)) || '', modified: iso(get(r, cM)) || '', accessed: iso(get(r, cA)) || '', recordChanged: iso(get(r, cC)) || '' };
+        const fn = { created: iso(get(r, cCrF)) || '', modified: iso(get(r, cMF)) || '', accessed: iso(get(r, cAF)) || '', recordChanged: iso(get(r, cCF)) || '' };
+        mrows.push({ entry: +get(r, cE), seq: +get(r, cSeq), inUse: truthy(get(r, cU)), isDir: dir, parentPath: pp, name, size: +get(r, cSz) || 0, ads: [], si: si.created ? si : null, fn: fn.created ? fn : null });
+        if (all.length < 3000000) all.push([+get(r, cE), +get(r, cSeq), truthy(get(r, cU)) ? 'Y' : 'N', dir ? 'Dir' : 'File', pp, name, +get(r, cSz) || 0, si.created, si.modified, si.accessed, si.recordChanged, fn.created, fn.modified, fn.accessed, fn.recordChanged, truthy(get(r, cCp)) ? 'Y' : '', '']);
         if (dir) continue;
         const wp = `${pp}\\${name}`.replace(/^\./, 'C:');
         const z = get(r, cZ);
@@ -229,6 +235,7 @@ export function runEzCsv(u8, f, ctx, kind, shared) {
       for (const x of flagged.slice(0, 150)) { ctx.finding({ sev: x[3], category: 'File System', tool: 'MFTECmd', file: f.name, time: x[0], title: `File ${x[2] === 'Deleted' ? '(deleted) ' : ''}in suspicious location: ${baseName(x[1])}`, detail: x[4], evidence: x[1], mitre: ['T1036', 'T1105'] }); ctx.event({ time: x[0], tool: 'MFTECmd', file: f.name, type: 'Suspicious file created ($SI)', desc: x[1] }); }
       if (stomped.length) ctx.finding({ sev: stomped.length > 20 ? 'medium' : 'high', category: 'Defense Evasion', tool: 'MFTECmd', file: f.name, title: `${stomped.length} executable(s) with timestomping indicators ($SI < $FN, zeroed fractions)`, evidence: stomped.slice(0, 30).map((s) => s.join('  ')).join('\n'), mitre: ['T1070.006'] });
       tables.push(T('Flagged files', ['$SI Created', 'Path', 'InUse', 'Severity', 'Reasons'], flagged));
+      tables.push(T('All MFT entries', MFT_ALL_COLS, all, 'MACB: B = Created (born), M = Modified, A = Accessed, C = $MFT record change.'));
       summary = `${mrows.length} records, ${flagged.length} flagged, ${stomped.length} timestomp candidates`;
       keep(); break;
     }

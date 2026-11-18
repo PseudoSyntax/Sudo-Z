@@ -87,6 +87,10 @@ function systemPlugins(root, f, ctx, tables) {
   const epf = pfp?.get('EnablePrefetcher');
   if (epf != null) { info.push(['EnablePrefetcher', `${epf} (${['disabled', 'applications only', 'boot only', 'applications and boot'][epf] || '?'})`]); ctx.settings.enablePrefetcher = { value: epf, time: pfp.lastWritten, file: f.name }; }
 
+  const fsk = cs.path('Control\\FileSystem');
+  const nla = fsk?.get('NtfsDisableLastAccessUpdate');
+  if (nla != null) { info.push(['NtfsDisableLastAccessUpdate', `0x${(nla >>> 0).toString(16)}`]); ctx.settings.lastAccess = { value: nla, time: fsk.lastWritten, file: f.name }; }
+
   // RDP / credential settings
   const ts = cs.path('Control\\Terminal Server');
   if (ts) {
@@ -495,6 +499,8 @@ function amcachePlugins(root, f, ctx, tables) {
     const path = k.get('LowerCaseLongPath') || ''; if (!path) continue;
     const sha1 = String(k.get('FileId') || '').replace(/^0000/, '');
     rows.push([k.lastWritten, path, sha1, k.get('Publisher') || '', k.get('ProductName') || '', k.get('Version') || '', k.get('LinkDate') || '', k.get('IsOsComponent') ? 'Y' : '', k.get('Size') ?? '']);
+    const ld = String(k.get('LinkDate') || '').match(/^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2}):(\d{2})$/);
+    if (ld && !k.get('IsOsComponent')) ctx.fileTimes({ path, source: 'Amcache LinkDate', kind: 'recorded', file: f.name, extra: { compiled: `${ld[3]}-${ld[1]}-${ld[2]}T${ld[4]}:${ld[5]}:${ld[6]}Z`, app: k.get('Publisher') || '' } });
   }
   ctx.sawArtifact('Amcache', f.name);
   const old = R.sub('File');

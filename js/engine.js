@@ -28,9 +28,12 @@ import { isPe } from './parsers/pe.js';
 import { runPe } from './tools/binaries.js';
 import { buildPrograms, gradeSignatures } from './ioc/programs.js';
 import { analyseExecution } from './ioc/execution.js';
+import { analyseMacb } from './ioc/macb.js';
+import { OOXML_EXT, OLE_EXT, isPdf } from './parsers/docmeta.js';
+import { runDoc } from './tools/documents.js';
 import { detectEzCsv, runEzCsv } from './tools/ezcsv.js';
 
-export const VERSION = '1.8.0';
+export const VERSION = '1.9.0';
 const MAX_ZIP_DEPTH = 3;
 const MAX_FILE = 1.5 * 1024 ** 3;
 
@@ -63,6 +66,9 @@ export function detect(name, u8) {
   if (isEse(u8)) return { id: 'ese', tool: /srudb/i.test(b) ? 'SrumECmd' : /\.mdb$/i.test(b) ? 'SumECmd' : 'ESE', label: 'ESE database' };
   if (isWal(u8)) return { id: 'wal', tool: 'SQLECmd', label: 'SQLite write-ahead log' };
   if (isJob(u8, b)) return { id: 'job', tool: 'Sudo-Z', label: 'Task Scheduler 1.0 job' };
+  if (OOXML_EXT.test(b) && isZip(u8)) return { id: 'doc', kind: 'ooxml', tool: 'Sudo-Z docmeta', label: 'Office document (OOXML)' };
+  if (OLE_EXT.test(b) && isCfb(u8)) return { id: 'doc', kind: 'ole', tool: 'Sudo-Z docmeta', label: 'Office document (OLE, 97-2003)' };
+  if (/\.pdf$/i.test(b) && isPdf(u8)) return { id: 'doc', kind: 'pdf', tool: 'Sudo-Z docmeta', label: 'PDF document' };
   const ez = detectEzCsv(b, u8);
   if (ez) return { id: 'ezcsv', tool: ez.tool, label: ez.label, ez };
   const head = utf8(u8.subarray(0, 4096));
@@ -79,7 +85,7 @@ export function detect(name, u8) {
   if (/^(e01|ex01|s01|l01|aff4?|vmdk|vhdx?|vdi|qcow2?|dd|img|iso|dmg)$/i.test(ext(b)) || /^(hiberfil|pagefile|swapfile)\.sys$/i.test(b)) return { reject: true, reason: /^(hiberfil|pagefile|swapfile)\.sys$/i.test(b) ? 'Hibernation or page file (memory). Use Volatility 3 through the home install.' : 'Disk image Sudo-Z could not open (no NTFS volume found, or an unsupported container such as VMDK, VDI, AFF4 or DMG). Supported: raw/dd, split raw, E01, VHD, VHDX, QCOW2.' };
   if (/^(rar|7z|gz|tgz|tar|bz2|xz|cab|wim)$/i.test(ext(b))) return { reject: true, reason: `.${ext(b)} archives are not opened in-browser. Re-pack as a standard .zip.` };
   if (/^(jpe?g|png|gif|bmp|ico|mp3|mp4|avi|mov|wav|ttf|otf|woff2?)$/i.test(ext(b))) return { reject: true, reason: 'Media/font file. No EZ tool parses this; hashed and string-scanned only.', strings: true };
-  if (/^(docx?|xlsx?|pptx?|pdf|rtf|one|msg|eml)$/i.test(ext(b))) return { reject: true, reason: 'Office/PDF/mail document. Only EZViewer (a viewer) opens these; hashed and string-scanned for indicators.', strings: true };
+  if (/^(docx?|xlsx?|pptx?|pdf|rtf|one|msg|eml)$/i.test(ext(b))) return { reject: true, reason: 'RTF, OneNote or mail file. Only EZViewer (a viewer) opens these; hashed and string-scanned for indicators.', strings: true };
   return { reject: true, reason: 'No Eric Zimmerman tool accepts this file type. Hashed and string-scanned only.', strings: true };
 }
 
@@ -132,7 +138,7 @@ async function openImages(inputs, onProgress, log) {
 async function expand(inputs, log) {
   const out = []; const rejected = [];
   const walk = async (name, data, depth, parent, meta = {}) => {
-    if (isZip(data) && /\.zip$|^[^.]*$/i.test(base(name)) || (isZip(data) && depth === 0)) {
+    if (isZip(data) && /\.zip$|^[^.]*$/i.test(base(name)) || (isZip(data) && depth === 0 && !OOXML_EXT.test(base(name)))) {
       if (depth >= MAX_ZIP_DEPTH) { rejected.push({ name, size: data.length, reason: `Nested zip deeper than ${MAX_ZIP_DEPTH} levels.`, parent }); return; }
       log(`unzipping ${name}`);
       let z;
@@ -144,7 +150,7 @@ async function expand(inputs, log) {
         if (velo && /^results\/.+\.json$/i.test(ent.name) && !ent.error) { out.push({ name: full, data: ent.data, parent: name, velo: true }); continue; }
         if (velo && !/^uploads\//i.test(ent.name) && /\.json$/i.test(ent.name) && !ent.error) { out.push({ name: full, data: ent.data, parent: name, veloMeta: true }); continue; }
         if (ent.error) { rejected.push({ name: full, size: ent.size, reason: ent.error, parent: name }); continue; }
-        await walk(full, ent.data, depth + 1, name);
+        await walk(full, ent.data, depth + 1, name, ent.times ? { zipTimes: ent.times } : {});
       }
       return;
     }
@@ -227,6 +233,7 @@ export async function analyze(inputs, opts = {}) {
         case 'velo': r = runVelo(f.data, ff, ctx); break;
         case 'pe': r = runPe(f.data, ff, ctx, { winPath: f.winPath, fromImage: f.fromImage, si: f.si, sha1: rec.hashes?.sha1 }); break;
         case 'ezcsv': r = runEzCsv(f.data, ff, ctx, f.det.ez, shared); break;
+        case 'doc': r = await runDoc(f.data, ff, ctx, f.det.kind, { winPath: f.winPath, si: f.si }); break;
         case 'velo-meta': { const t = utf8(f.data); for (const m of t.matchAll(/"(?:Hostname|Fqdn|hostname|fqdn)"\s*:\s*"([^"]+)"/g)) ctx.hosts.add(m[1]); r = { tool: 'Velociraptor', artifact: f.det.label, summary: `${f.data.length} bytes`, tables: [], notes: [] }; break; }
         case 'reglog': case 'wal':
           if (f.pairedWith) r = { tool: f.det.id === 'wal' ? 'SQLECmd' : 'RLA', artifact: f.det.label, summary: `${f.det.id === 'wal' ? 'merged into' : 'replayed into'} ${f.pairedWith.split('/').pop()}`, tables: [], notes: [] };
@@ -245,6 +252,9 @@ export async function analyze(inputs, opts = {}) {
       rec.status = 'error';
       try { const g = A.runGeneric(f.data, ff, ctx, 'Parser error, strings only'); rec.tables = g.tables; rec.summary = g.summary; } catch { }
     }
+    // file system times that came with the file (disk image $SI, archive entry) for the MACB analysis
+    if (f.si && f.winPath) ctx.fileTimes({ path: f.winPath, source: '$SI (disk image)', kind: 'fs', file: f.name, B: f.si.created || '', M: f.si.modified || '', A: f.si.accessed || '', C: f.si.mftModified || '' });
+    if (f.zipTimes && (f.zipTimes.mtime || f.zipTimes.dos)) { const z = f.zipTimes; ctx.fileTimes({ path: f.name, source: z.zone ? `ZIP entry (${z.zone})` : 'ZIP entry (DOS time, local, no zone)', kind: 'container', utc: !!z.zone, file: f.name, B: z.ctime || '', M: z.mtime || z.dos, A: z.atime || '' }); }
     if (rec.hashes) ctx.indicators.add('sha256_submitted', rec.hashes.sha256, f.name, base(f.name));
     rec.ms = Date.now() - t;
     results.push(rec);
@@ -262,6 +272,8 @@ export async function analyze(inputs, opts = {}) {
   const timeline = ctx.timeline.filter((e) => e.time).sort((a, b) => a.time.localeCompare(b.time));
   let execution = { coverage: [] };
   try { const pre = ctx.findings.filter((x) => SEV_RANK[x.sev] >= 3 && x.time).map((x) => x.time).sort(); execution = analyseExecution(ctx, results, { attackFirst: pre[0] }); } catch (e) { log('execution evidence analysis failed: ' + e.message); }
+  let macb = null;
+  try { const pre = ctx.findings.filter((x) => SEV_RANK[x.sev] >= 3 && x.time).map((x) => x.time).sort(); macb = analyseMacb(ctx, shared, { attackFirst: pre[0], attackLast: pre[pre.length - 1] }); } catch (e) { log('MACB analysis failed: ' + e.message); }
   try { gradeSignatures(ctx); } catch (e) { log('signature grading failed: ' + e.message); }
   attachNextSteps(ctx.findings);
   const findings = ctx.sortedFindings();
@@ -281,6 +293,6 @@ export async function analyze(inputs, opts = {}) {
     verdict, severity: sev, counts,
     hosts: [...ctx.hosts].filter(Boolean), users: [...ctx.users].filter((u) => u && !/^(-|system|local service|network service|anonymous logon|dwm-\d+|umfd-\d+)$/i.test(u) && !/\$$/.test(u)),
     window: { first, last, attackFirst: hot[0], attackLast: hot[hot.length - 1] },
-    leads, programs, execution, findings, indicators, timeline, files: results,
+    leads, programs, execution, macb, findings, indicators, timeline, files: results,
   };
 }

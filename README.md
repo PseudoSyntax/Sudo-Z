@@ -155,7 +155,7 @@ The CLI writes `report.md`, `report.json`, `findings.csv`, `indicators.csv` and 
 |---|---|
 | 01 SITREP | Verdict, severity counts, the high/critical activity window, hosts and accounts seen, activity by tactic, ATT&CK techniques, indicator types, the top leads, the programs to review, priority findings and per-tool coverage |
 | 02 INVESTIGATE | Leads built by correlating artifacts, each with why it matters, what to do next, the evidence and the related timeline events. A pivot box searches findings, indicators, the timeline and leads at once for any name, hash, user, IP or path |
-| 03 GRID | A Timeline Explorer style grid over any table: the Programs view (default), findings, the super timeline, indicators, leads, and every parsed artifact or tool CSV. Click a header to sort, type under it to filter (`text`, `!not`, `=exact`, `>n`, `<n`, `/regex/`), group by any column, tag rows, hide columns, resize them, open a row's details and export the current view |
+| 03 GRID | A Timeline Explorer style grid over any table: the Programs view (default), findings, the super timeline, indicators, leads, the MACB views, and every parsed artifact or tool CSV. Click a header to sort, type under it to filter (`text`, `!not`, `=exact`, `>n`, `<n`, `/regex/`), group by any column, tag rows, hide columns, resize them, open a row's details and export the current view |
 | 04 STRINGS | bstrings search over every loaded file (and, if you tick it, the raw bytes of whole disk and memory images): find text (`--ls`), a regex (`--lr`), any of bstrings' 27 built-in patterns by name plus CTF flags, encoded PowerShell, NTLM hashes and private keys, a list of strings (`--fs`) or every string. Min/max length, ASCII or Unicode only, case sensitivity, only-the-match, file filter and max file size. Hits show file, byte offset and encoding in a sortable, filterable grid. On the home install it can also run the real bstrings.exe on any folder and load its output into the same grid |
 | 05 FINDINGS | Every finding with severity, category, tool, source file, the reason it fired, a NEXT step, ATT&CK links and the raw evidence. Filter by severity, category or free text |
 | 06 INDICATORS | Atomic IOCs grouped by type with counts, sources and context. Defang toggle and copy-all |
@@ -164,7 +164,7 @@ The CLI writes `report.md`, `report.json`, `findings.csv`, `indicators.csv` and 
 | 09 REJECTED | Files no tool accepts, with the reason and what was done instead, plus guidance on inputs that cannot be accepted |
 | 10 TOOLS | Every Eric Zimmerman tool plus Volatility 3 and Velociraptor: what it does, what it accepts, how Sudo-Z covers it, and whether it works on the website or needs the home install |
 
-Exports: Markdown IOC report (with Leads to investigate, Programs to review, and a Next line per finding), full JSON, programs CSV, leads CSV, findings CSV, indicators CSV and a timeline CSV that opens directly in Timeline Explorer.
+Exports: Markdown IOC report (with Leads to investigate, Programs to review, MACB file times, and a Next line per finding), full JSON, programs CSV, leads CSV, findings CSV, indicators CSV, a timeline CSV that opens directly in Timeline Explorer, MACB anomalies CSV and a Sleuth Kit body file (feed it to `mactime`).
 
 ## How a file is routed
 
@@ -190,6 +190,7 @@ Each file is identified by its signature first and its name second, so a renamed
 | Velociraptor collection zip | Velociraptor (uploads decoded, results graded) |
 | E01 / VHD / VHDX / QCOW2 / raw disk with MBR or GPT | Disk image reader, then every parser on the extracted triage files |
 | Memory image (crash dump, hiberfil, LiME, large raw) | Home install only (Volatility 3) |
+| Office documents (OOXML zip or OLE) and PDF | Sudo-Z docmeta (embedded times, macros, remote templates, PDF actions) |
 | Task XML, `ConsoleHost_history.txt`, scripts | Sudo-Z extras |
 | Anything else | Hasher + bstrings, listed under REJECTED with a reason |
 
@@ -233,6 +234,40 @@ What you get:
   * **Same path, different SHA1** in Amcache: the binary at that path was replaced (updates, or a trojanised copy).
   * **Present, never proven to run:** suspicious files only ShimCache or Amcache saw. Staged tools, or programs whose other traces were removed.
   * When the evidence names several hosts, the Prefetch checks say so and are toned down, since the artifacts may not be from the same machine.
+
+## MACB: file times, and the times inside files
+
+Every file has four times on NTFS, and they live in two places. MACB is Modified, Accessed, Changed (the $MFT record change, not the creation time) and Born. `$STANDARD_INFORMATION` ($SI) holds the four times Explorer shows and any program can rewrite with one API call. `$FILE_NAME` ($FN) holds another four that only the kernel sets. Files also carry times of their own that move with them: a document's created and last saved times, a program's compile time. And other artifacts keep copies: a shortcut remembers its target's B, M and A from the day it was opened. Sudo-Z puts all of these side by side.
+
+| Source | Times | Comes from |
+|---|---|---|
+| $MFT (native or MFTECmd CSV) | $SI B M A C and $FN B M A C, all eight, plus Copied | MFTECmd |
+| Disk image | $SI B M A C of each extracted file | the image reader |
+| Archive entry | M, A, B from the NTFS extra field (7-Zip, WinRAR), M from the extended timestamp, or the DOS time (local, no zone, shown but not compared) | ZIP central directory |
+| Office documents | created, last saved, last printed, author, last saved by, application | docx/docm/xlsx/pptx `docProps/core.xml` and `app.xml`, doc/xls/ppt `SummaryInformation` |
+| PDF | /CreationDate, /ModDate (last incremental update), XMP dates, author, producer | the PDF itself |
+| Programs | PE header compile time; Amcache LinkDate | the PE file; Amcache.hve |
+| Shortcuts and jump lists | the target's B, M, A when it was opened, and its $MFT entry and sequence | LNK header and shell items |
+
+Checks on the $MFT itself:
+
+* **$SI born before $FN born.** The visible born time was moved back.
+* **B or M later than C.** Every change updates C, so a born or modified time after it was set forward by a tool.
+* **All four $SI times identical with no sub-second part.** What a timestomp tool writes when given one value.
+* **Born before the volume was formatted** (`$MFT` record 0), for files in user folders.
+* **Times in the future.**
+* **Bursts:** 50+ files born in one minute in user-writable folders (extraction, installer or dropper), and 200+ user files modified in one minute, high when one new extension dominates (ransomware encrypting in place).
+
+Checks against the times inside files and copies kept elsewhere:
+
+* **Compiled after the file system says the file was born and last modified** (not for Microsoft-signed or Windows folder binaries, where reproducible builds put a hash in the compile time).
+* **Document saved after its file system M, or authored after its file system B.** M or B was set back.
+* **Document created after last saved.** Typical of documents built by scripts.
+* **A shortcut's copy of the target's B or M is later than the current $MFT.** The times went back after the user opened it. A different $MFT entry or sequence means the file was **replaced** with a new one of the same name.
+
+To keep the noise down, $MFT checks outside user-writable folders count only for programs, the same anomaly on 10 or more files in one folder is marked bulk and kept low (installers and archive extractions keep the archive's times), and a rule that fires on more than 2% of the volume is capped at medium with a note to check for a clock change. The Accessed time comes with a caveat read from the SYSTEM hive (`NtfsDisableLastAccessUpdate`): on most systems A is not updated or is updated lazily, so it is weak evidence.
+
+Where it shows: a MACB box on SITREP, four GRID views (anomalies, content vs file system times, bursts, and a mactime style MACB timeline of every $SI and $FN time with `macb` flags), a section in the report, `macb.csv`, and a body file for `mactime`. Documents also get their own findings: VBA macros, remote template injection (T1221), external OLE links, and PDF JavaScript, auto actions, Launch and embedded files.
 
 ## Signatures and the Programs view
 
@@ -387,7 +422,7 @@ Exports ShellBags: folders a user opened in Explorer, including on removable, ne
 
 Parses NTFS metadata files into CSV / bodyfile with full paths, $SI and $FN timestamps and alternate data streams.
 
-**In Sudo-Z:** FILE record fix-ups, $SI/$FN, ADS (reads Zone.Identifier HostUrl / ReferrerUrl), path resolution, timestomp heuristics, ransom note and mass-extension detection, files in suspicious locations. $J and $I30 paths resolve when the $MFT is in the same submission. $I30 INDX records are parsed including deleted entries recovered from slack. $SDS and $LogFile are not decoded yet.
+**In Sudo-Z:** FILE record fix-ups, $SI/$FN, ADS (reads Zone.Identifier HostUrl / ReferrerUrl), path resolution, MACB analysis of all eight $SI/$FN times (B before $FN, B or M after C, identical whole-second times, born before the volume, future times, mass born/modified bursts) with a mactime style timeline and a TSK bodyfile export, timestomp heuristics, ransom note and mass-extension detection, files in suspicious locations. $J and $I30 paths resolve when the $MFT is in the same submission. $I30 INDX records are parsed including deleted entries recovered from slack. $SDS and $LogFile are not decoded yet.
 
 ### RBCmd
 
@@ -530,7 +565,7 @@ Replays registry transaction logs into dirty hives.
 
 Standalone viewer for many document formats; unknown files open in a hex editor.
 
-**In Sudo-Z:** Viewer, not an analyser. Sudo-Z hashes and string-scans documents instead.
+**In Sudo-Z:** Viewer, not an analyser. Sudo-Z reads Office (docx/docm/xlsx/pptx and 97-2003 doc/xls/ppt) and PDF metadata itself: created, last saved, last printed, author, application, VBA macros, remote templates, external links, PDF JavaScript and auto actions. Those embedded times are compared with the file system times (MACB). RTF, OneNote and mail are hashed and string-scanned.
 
 ### Timeline Explorer
 

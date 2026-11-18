@@ -12,6 +12,7 @@ export function runPe(u8, f, ctx, meta = {}) {
   const path = meta.winPath || f.name;
   const sha1 = meta.sha1 || '';
   ctx.sign({ path, sha1, signed: pi.signed, signer: pi.signer, publisher: pi.org, status: pi.signed ? 'embedded signature (not verified)' : 'no embedded signature', kind: pi.kind, source: meta.fromImage ? 'PE file (disk image)' : 'PE file (submitted)', file: f.name, time: meta.si?.created || '' });
+  if (pi.compiled) ctx.fileTimes({ path: meta.winPath || f.name, source: 'PE header compile time', kind: 'embedded', file: f.name, extra: { compiled: pi.compiled, signer: pi.signer || '', app: pi.org || '' } });
   const pc = classifyPath(path);
   const sig = pi.signed ? `signed by ${pi.signer || 'unknown signer'}${pi.issuer ? ` (issuer ${pi.issuer})` : ''}` : 'no embedded signature';
   if (meta.fromImage) {

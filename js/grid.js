@@ -1,3 +1,4 @@
+import { macbRows } from './ioc/macb.js';
 // GRID: a Timeline Explorer style data grid over any table in the report.
 // Virtual scrolling (100k+ rows), click-to-sort, per-column filters
 // (text, !not, =exact, >n, <n, /regex/), global search, group by column,
@@ -8,6 +9,9 @@ const ROW_H = 22;
 const SEVS = ['critical', 'high', 'medium', 'low', 'info'];
 
 /** Datasets the grid can open, from a report. */
+/** Every "All MFT entries" table in the report (native $MFT and MFTECmd CSV). */
+export const mftAllTables = (rep) => rep.files.flatMap((f) => (f.tables || []).filter((t) => t.title === 'All MFT entries' && t.columns.length >= 17 && t.rows?.length));
+
 export function datasets(rep, programColumns) {
   const ds = [];
   if (rep.programs?.length) ds.push({ id: 'programs', group: 'Overview', label: `Programs (${rep.programs.length})`, cols: programColumns.map((c) => c[1]), rows: () => rep.programs.map((p) => programColumns.map((c) => p[c[0]] ?? '')), sevCol: 1, keyCols: [2, 5] });
@@ -16,6 +20,17 @@ export function datasets(rep, programColumns) {
   ds.push({ id: 'timeline', group: 'Overview', label: `Super timeline (${rep.timeline.length})`, cols: ['Time (UTC)', 'Source', 'Event', 'Description', 'File'], rows: () => rep.timeline.map((e) => [e.time, e.tool, e.type, e.desc, e.file]) });
   ds.push({ id: 'indicators', group: 'Overview', label: `Indicators (${rep.indicators.length})`, cols: ['Type', 'Value', 'Count', 'Sources', 'Context'], rows: () => rep.indicators.map((i) => [i.type, i.value, i.count, i.sources.join(' | '), i.context || '']) });
   if (rep.leads?.length) ds.push({ id: 'leads', group: 'Overview', label: `Leads (${rep.leads.length})`, cols: ['Severity', 'Kind', 'Title', 'Why', 'Next', 'Evidence'], rows: () => rep.leads.map((l) => [l.sev, l.kind, l.title, l.why, l.next, l.evidence || '']), sevCol: 0 });
+  const m = rep.macb;
+  if (m) {
+    if (m.anomalies?.length) ds.push({ id: 'macb-anom', group: 'MACB (file times)', label: `MACB anomalies (${m.anomalies.length})`, cols: ['Severity', 'Rule', 'Path', 'Detail', '$SI B', '$SI M', '$SI A', '$SI C', '$FN B', 'Entry', 'Content B', 'Content M', 'Source'], rows: () => m.anomalies.map((a) => [a.sev, a.title, a.path, a.detail, a.siB || '', a.siM || '', a.siA || '', a.siC || '', a.fnB || '', a.entry || '', a.embB || '', a.embM || '', a.source || '']), sevCol: 0, keyCols: [2] });
+    if (m.embedded?.length) ds.push({ id: 'macb-emb', group: 'MACB (file times)', label: `File times from content and other artifacts (${m.embedded.length})`, cols: ['Path', 'Source', 'Kind', 'B (born/created)', 'M (modified/saved)', 'A (accessed)', 'Other', 'Author', 'Last saved by', 'Application', 'FS source', 'FS B', 'FS M', 'FS entry', 'Recorded entry', 'Verdict', 'File'], rows: () => m.embedded.map((e) => [e.path, e.source, e.kind, e.B, e.M, e.A, e.other, e.author, e.lastBy, e.app, e.fsSource, e.fsB, e.fsM, e.fsEntry, e.recEntry, e.verdict, e.file]), keyCols: [0] });
+    if (m.clusters?.length) ds.push({ id: 'macb-burst', group: 'MACB (file times)', label: `Bursts: many files born or modified in one minute (${m.clusters.length})`, cols: ['Kind', 'Minute (UTC)', 'Files', 'Executables', 'Folders', 'Top folder', 'Top extension', 'In attack window'], rows: () => m.clusters.map((c) => [c.kind, c.minute, c.files, c.executables, c.folders, c.topFolder, c.topExt, c.inWindow ? 'Yes' : '']) });
+  }
+  const mftTables = mftAllTables(rep);
+  if (mftTables.length) {
+    const n = mftTables.reduce((k, t) => k + t.rows.length, 0);
+    ds.push({ id: 'macb-tl', group: 'MACB (file times)', label: `MACB timeline, mactime style ($SI + $FN, ${n} records)`, cols: ['Time (UTC)', 'MACB', 'Attr', 'Size', 'Entry-Seq', 'InUse', 'Type', 'Path'], rows: () => { const all = []; for (const t of mftTables) all.push(...macbRows(t).rows); all.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)); return all.slice(0, 2000000); } });
+  }
   rep.files.forEach((f, fi) => (f.tables || []).forEach((t, ti) => {
     if (!t.rows?.length) return;
     const csv = /CSV/.test(f.artifact || '') || /CSV/.test(t.title);
