@@ -1,6 +1,6 @@
 // Sudo-Z UI controller.
 import { CATALOG, NOT_ACCEPTED_HELP, availability } from './catalog.js';
-import { markdown, csv, timelineCsv, findingsCsv, indicatorsCsv, mitreSummary, indicatorLabel, defang } from './report.js';
+import { markdown, csv, timelineCsv, findingsCsv, indicatorsCsv, leadsCsv, mitreSummary, indicatorLabel, defang } from './report.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (v) => {
@@ -14,7 +14,7 @@ const SEVS = ['critical', 'high', 'medium', 'low', 'info'];
 const SEV_SHORT = { critical: 'CRIT', high: 'HIGH', medium: 'MED', low: 'LOW', info: 'INFO' };
 const isTimeCol = (c) => /time|created|modified|accessed|last|first|start|end|deleted|write|logon|run|when|date|visit/i.test(c);
 
-const S = { staged: [], rep: null, tab: 'sitrep', f: { sev: new Set(['critical', 'high', 'medium', 'low', 'info']), q: '', cat: '' }, tl: { q: '', tool: '', page: 0 }, ind: { q: '', type: '', defang: true }, art: { q: '' } };
+const S = { staged: [], rep: null, tab: 'sitrep', f: { sev: new Set(['critical', 'high', 'medium', 'low', 'info']), q: '', cat: '' }, tl: { q: '', tool: '', page: 0 }, ind: { q: '', type: '', defang: true }, art: { q: '' }, inv: { q: '' } };
 
 // ---------------------------------------------------------------- clock
 setInterval(() => { $('#clock').textContent = new Date().toISOString().slice(11, 19) + ' UTC'; }, 1000);
@@ -97,6 +97,7 @@ $('#exports').addEventListener('click', (e) => {
     md: () => [markdown(S.rep, { defanged: S.ind.defang }), `sudo-z_report_${stamp}.md`, 'text/markdown'],
     json: () => [JSON.stringify(S.rep, (k, v) => (typeof v === 'bigint' ? v.toString() : v instanceof Uint8Array ? Array.from(v.subarray(0, 512), (x) => x.toString(16).padStart(2, '0')).join('') : v), 1), `sudo-z_report_${stamp}.json`, 'application/json'],
     findings: () => [findingsCsv(S.rep), `sudo-z_findings_${stamp}.csv`, 'text/csv'],
+    leads: () => [leadsCsv(S.rep), `sudo-z_leads_${stamp}.csv`, 'text/csv'],
     ioc: () => [indicatorsCsv(S.rep), `sudo-z_ioc_${stamp}.csv`, 'text/csv'],
     timeline: () => [timelineCsv(S.rep), `sudo-z_timeline_${stamp}.csv`, 'text/csv'],
   };
@@ -109,7 +110,7 @@ function download(data, name, type) {
 
 function onReport() {
   const r = S.rep;
-  $('#n-findings').textContent = r.findings.length; $('#n-ind').textContent = r.indicators.length; $('#n-tl').textContent = r.timeline.length;
+  $('#n-leads').textContent = (r.leads || []).length; $('#n-findings').textContent = r.findings.length; $('#n-ind').textContent = r.indicators.length; $('#n-tl').textContent = r.timeline.length;
   $('#n-art').textContent = r.files.filter((f) => f.status !== 'rejected').length; $('#n-rej').textContent = r.files.filter((f) => f.status === 'rejected' || f.status === 'partial').length;
   $('#exports').hidden = false;
   S.tab = 'sitrep'; [...$('#tabs').querySelectorAll('button[data-tab]')].forEach((x) => x.classList.toggle('on', x.dataset.tab === 'sitrep'));
@@ -120,7 +121,7 @@ function render() {
   const v = $('#view');
   if (S.tab === 'tools') return (v.innerHTML = toolsView());
   if (!S.rep) return (v.innerHTML = idleView());
-  ({ sitrep: sitrepView, findings: findingsView, indicators: indicatorsView, timeline: timelineView, artifacts: artifactsView, rejected: rejectedView })[S.tab](v);
+  ({ sitrep: sitrepView, investigate: investigateView, findings: findingsView, indicators: indicatorsView, timeline: timelineView, artifacts: artifactsView, rejected: rejectedView })[S.tab](v);
 }
 
 // ---------------------------------------------------------------- idle
@@ -163,11 +164,14 @@ function sitrepView(v) {
       <div class="box"><div class="ph"><span class="code">D</span> INDICATOR TYPES</div><div class="body chips">${[...types].sort((a, b) => b[1] - a[1]).map(([t, n]) => `<span class="chip t" data-ind="${esc(t)}">${esc(indicatorLabel(t))} <b style="color:var(--amber);font-weight:400">${n}</b></span>`).join('') || '<span class="muted">none</span>'}</div></div>
     </div>
     <div>
+      <div class="box"><div class="ph"><span class="code">L</span> LEADS TO INVESTIGATE <a class="more" href="#" data-go="investigate">ALL ${(r.leads || []).length} &gt;</a></div><div class="body">${(r.leads || []).length ? r.leads.slice(0, 6).map((l, i) => leadRow(l, i, true)).join('') : '<span class="muted">No correlated leads. Check FINDINGS for single-artifact hits.</span>'}</div></div>
       <div class="box"><div class="ph"><span class="code">E</span> PRIORITY FINDINGS</div><div class="body">${top.length ? top.map(findingRow).join('') : '<span class="muted">No high or critical findings.</span>'}</div></div>
       <div class="box"><div class="ph"><span class="code">F</span> COVERAGE</div><div class="body">${coverage(r)}</div></div>
     </div>
   </div>`;
   v.querySelectorAll('.kpi').forEach((k) => k.addEventListener('click', () => { S.f.sev = new Set([k.dataset.sev]); switchTab('findings'); }));
+  v.querySelectorAll('[data-go]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); switchTab(a.dataset.go); }));
+  bindLeads(v);
   v.querySelectorAll('[data-ind]').forEach((k) => k.addEventListener('click', () => { S.ind.type = k.dataset.ind; switchTab('indicators'); }));
   bindFindings(v);
 }
@@ -182,7 +186,7 @@ function switchTab(t) { S.tab = t; [...$('#tabs').querySelectorAll('button[data-
 function findingRow(f, i) {
   const mitre = (f.mitre || []).filter(Boolean).map((m) => `<a target="_blank" rel="noopener" href="https://attack.mitre.org/techniques/${m.replace('.', '/')}/">${m}</a>`).join('');
   return `<div class="fd ${f.sev}"><div class="hd"><span class="sev ${f.sev}">${SEV_SHORT[f.sev]}</span><span class="title">${esc(f.title)}</span><span class="when">${esc(f.time ? f.time.replace('T', ' ').slice(0, 19) : '')}</span></div>
-  <div class="bd"><div class="kv"><div>CATEGORY</div><div>${esc(f.category)}</div><div>TOOL</div><div>${esc(f.tool)}</div><div>SOURCE</div><div>${esc(f.file)}</div>${f.detail ? `<div>WHY</div><div>${esc(f.detail)}</div>` : ''}${mitre ? `<div>ATT&amp;CK</div><div class="mitre">${mitre}</div>` : ''}</div>${f.evidence ? `<pre class="ev">${esc(f.evidence)}</pre>` : ''}</div></div>`;
+  <div class="bd"><div class="kv"><div>CATEGORY</div><div>${esc(f.category)}</div><div>TOOL</div><div>${esc(f.tool)}</div><div>SOURCE</div><div>${esc(f.file)}</div>${f.detail ? `<div>WHY</div><div>${esc(f.detail)}</div>` : ''}${mitre ? `<div>ATT&amp;CK</div><div class="mitre">${mitre}</div>` : ''}${f.next ? `<div>NEXT</div><div class="next">${esc(f.next)}</div>` : ''}</div>${f.evidence ? `<pre class="ev">${esc(f.evidence)}</pre>` : ''}</div></div>`;
 }
 function bindFindings(root) { root.querySelectorAll('.fd .hd').forEach((h) => h.addEventListener('click', () => h.parentElement.classList.toggle('open'))); }
 
@@ -202,6 +206,53 @@ function findingsView(v) {
   const q = $('#fq'); q.addEventListener('input', debounce(() => { S.f.q = q.value; findingsView(v); $('#fq').focus(); $('#fq').setSelectionRange(q.value.length, q.value.length); }, 250));
   $('#fexp').addEventListener('click', () => { const open = !v.querySelector('.fd.open'); v.querySelectorAll('.fd').forEach((f) => f.classList.toggle('open', open)); });
   bindFindings(v);
+}
+
+// ---------------------------------------------------------------- INVESTIGATE
+function leadRow(l, i, compact) {
+  const mitre = (l.mitre || []).filter(Boolean).map((m) => `<a target="_blank" rel="noopener" href="https://attack.mitre.org/techniques/${m.replace('.', '/')}/">${m}</a>`).join('');
+  const ents = (l.entities || []).filter(Boolean).slice(0, 12).map((e) => `<span class="chip t" data-pivot="${esc(e)}" title="pivot on this">${esc(e)}</span>`).join(' ');
+  const rel = (l.related || []).length ? `<table class="t rel"><tr><th>TIME (UTC)</th><th>SOURCE</th><th>EVENT</th><th>DESCRIPTION</th></tr>${l.related.slice(0, compact ? 0 : 60).map((e) => `<tr><td>${esc(e.time)}</td><td>${esc(e.tool)}</td><td>${esc(e.type)}</td><td>${esc(String(e.desc || '').slice(0, 300))}</td></tr>`).join('')}</table>` : '';
+  return `<div class="fd lead ${l.sev}"><div class="hd"><span class="sev ${l.sev}">${SEV_SHORT[l.sev]}</span><span class="title"><span class="kind">${esc(l.kind.toUpperCase())}</span> ${esc(l.title)}</span><span class="when">${esc(l.category || '')}</span></div>
+  <div class="bd"><div class="kv"><div>WHY</div><div>${esc(l.why)}</div><div>NEXT</div><div class="next">${esc(l.next)}</div>${mitre ? `<div>ATT&amp;CK</div><div class="mitre">${mitre}</div>` : ''}${ents ? `<div>PIVOT</div><div>${ents}</div>` : ''}</div>${l.evidence ? `<pre class="ev">${esc(l.evidence)}</pre>` : ''}${compact ? '' : rel}</div></div>`;
+}
+function bindLeads(root) {
+  root.querySelectorAll('[data-pivot]').forEach((c) => c.addEventListener('click', (e) => { e.stopPropagation(); S.inv.q = c.dataset.pivot; switchTab('investigate'); }));
+}
+function investigateView(v) {
+  const r = S.rep; const leads = r.leads || [];
+  const q = S.inv.q.trim().toLowerCase();
+  let pivot = '';
+  if (q) {
+    const hit = (s) => String(s || '').toLowerCase().includes(q);
+    const fs = r.findings.filter((f) => hit(`${f.title} ${f.detail} ${f.evidence} ${f.file}`));
+    const is = r.indicators.filter((i) => hit(`${i.value} ${i.context}`));
+    const ts = r.timeline.filter((e) => hit(`${e.type} ${e.desc} ${e.file}`));
+    const ls = leads.filter((l) => hit(`${l.title} ${l.evidence} ${(l.entities || []).join(' ')}`));
+    const times = [...fs.map((f) => f.time), ...ts.map((e) => e.time)].filter(Boolean).sort();
+    pivot = `<div class="box"><div class="ph"><span class="code">P</span> PIVOT: "${esc(S.inv.q)}" · ${ls.length} leads · ${fs.length} findings · ${is.length} indicators · ${ts.length} timeline events${times.length ? ` · ${esc(times[0])} to ${esc(times[times.length - 1])}` : ''}</div><div class="body">
+      ${fs.length ? `<h4>FINDINGS</h4>${fs.slice(0, 100).map(findingRow).join('')}` : ''}
+      ${is.length ? `<h4>INDICATORS</h4><div id="pind"></div>` : ''}
+      ${ts.length ? `<h4>TIMELINE</h4><div id="ptl"></div>` : ''}
+      ${!fs.length && !is.length && !ts.length ? '<span class="muted">No matches.</span>' : ''}</div></div>`;
+    v.innerHTML = '';
+    S._piv = { is, ts };
+  }
+  v.innerHTML = `<div class="toolbar"><input type="search" id="invq" placeholder="pivot on anything: file name, hash, user, IP, path, T1053…" value="${esc(S.inv.q)}" style="flex:1">
+    ${S.inv.q ? '<button class="tog on" id="invclr">CLEAR</button>' : ''}<button class="tog on" id="lexp">EXPAND LEADS</button>
+    <span class="count">${leads.length} leads</span></div>
+    ${pivot}
+    <div class="box"><div class="ph"><span class="code">L</span> LEADS: correlated across artifacts, things a single tool would not show</div><div class="body">${leads.length ? leads.map((l, i) => leadRow(l, i, false)).join('') : '<span class="muted">No correlated leads were built. That usually means there were no high or critical findings to anchor on, or the evidence covers only one artifact type.</span>'}</div></div>`;
+  if (q && S._piv) {
+    if (S._piv.is.length) table($('#pind'), ['TYPE', 'VALUE', 'COUNT', 'CONTEXT'], S._piv.is.map((i) => [indicatorLabel(i.type), i.value, i.count, i.context]), { name: 'pivot_indicators' });
+    if (S._piv.ts.length) table($('#ptl'), ['TIME (UTC)', 'SOURCE', 'EVENT', 'DESCRIPTION', 'FILE'], S._piv.ts.map((e) => [e.time, e.tool, e.type, e.desc, e.file.split('/').pop()]), { name: 'pivot_timeline', pageSize: 200 });
+  }
+  const inp = $('#invq');
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { S.inv.q = inp.value; investigateView(v); } });
+  inp.addEventListener('input', debounce(() => { if (inp.value.length === 0 || inp.value.length >= 3) { S.inv.q = inp.value; investigateView(v); const n = $('#invq'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }, 400));
+  $('#invclr')?.addEventListener('click', () => { S.inv.q = ''; investigateView(v); });
+  $('#lexp').addEventListener('click', () => { const open = !v.querySelector('.lead.open'); v.querySelectorAll('.lead').forEach((f) => f.classList.toggle('open', open)); });
+  bindFindings(v); bindLeads(v);
 }
 
 // ---------------------------------------------------------------- INDICATORS

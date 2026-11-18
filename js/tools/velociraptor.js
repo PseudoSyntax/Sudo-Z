@@ -49,7 +49,8 @@ export function runVelo(u8, f, ctx) {
       const name = flat(pick(r, ['Entry', 'Name', 'ServiceName', 'TaskName', 'Key', 'Location']) || baseName(flat(exe)));
       if (ctx.persist({ mechanism: `Velociraptor ${artifact}`, name, command: flat(cmd || exe), time: time ? String(time) : null, tool: 'Velociraptor', file: f.name, mitre: ['T1547'] })) flagged++;
     } else if (cmd) {
-      const res = ctx.exec_({ path: flat(exe || flat(cmd).split(' ')[0]), args: flat(cmd), time: time ? String(time) : null, tool: 'Velociraptor', file: f.name, source: artifact });
+      const h = pick(r, ['Hash', 'Hashes']); const sha1 = (h && typeof h === 'object' ? h.SHA1 || h.sha1 : null) || pick(r, ['SHA1', 'Sha1']);
+      const res = ctx.exec_({ path: flat(exe || flat(cmd).split(' ')[0]), args: flat(cmd), time: time ? String(time) : null, tool: 'Velociraptor', file: f.name, source: artifact, sha1 });
       if (res?.sev) flagged++;
     }
     const ra = pick(r, ['Raddr', 'RemoteAddr', 'RemoteAddress', 'DestinationIp', 'DstIP']);
