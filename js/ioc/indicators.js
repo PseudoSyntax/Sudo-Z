@@ -86,6 +86,12 @@ export function extractFromText(text, store, source, { hashes = false } = {}) {
       if (/bitcoin|btc|wallet|ransom|pay/.test(ctx)) store.add('btc_wallet', m[0], source);
     }
   }
+  // bstrings built-ins worth keeping as indicators: BitLocker recovery keys and Monero wallets (ransom notes)
+  for (const m of text.matchAll(/\b\d{6}-\d{6}-\d{6}-\d{6}-\d{6}-\d{6}-\d{6}-\d{6}\b/g)) store.add('bitlocker_key', m[0], source);
+  for (const m of text.matchAll(/\b4[0-9AB][1-9A-HJ-NP-Za-km-z]{93}\b/g)) {
+    const ctx = text.slice(Math.max(0, m.index - 120), m.index).toLowerCase();
+    if (/monero|xmr|wallet|ransom|pay|miner|pool/.test(ctx)) store.add('btc_wallet', m[0], source + ' (Monero)');
+  }
   if (hashes) {
     for (const m of text.matchAll(RX.sha256)) store.add('sha256', m[0].toLowerCase(), source);
   }

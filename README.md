@@ -156,12 +156,13 @@ The CLI writes `report.md`, `report.json`, `findings.csv`, `indicators.csv` and 
 | 01 SITREP | Verdict, severity counts, the high/critical activity window, hosts and accounts seen, activity by tactic, ATT&CK techniques, indicator types, the top leads, the programs to review, priority findings and per-tool coverage |
 | 02 INVESTIGATE | Leads built by correlating artifacts, each with why it matters, what to do next, the evidence and the related timeline events. A pivot box searches findings, indicators, the timeline and leads at once for any name, hash, user, IP or path |
 | 03 GRID | A Timeline Explorer style grid over any table: the Programs view (default), findings, the super timeline, indicators, leads, and every parsed artifact or tool CSV. Click a header to sort, type under it to filter (`text`, `!not`, `=exact`, `>n`, `<n`, `/regex/`), group by any column, tag rows, hide columns, resize them, open a row's details and export the current view |
-| 04 FINDINGS | Every finding with severity, category, tool, source file, the reason it fired, a NEXT step, ATT&CK links and the raw evidence. Filter by severity, category or free text |
-| 05 INDICATORS | Atomic IOCs grouped by type with counts, sources and context. Defang toggle and copy-all |
-| 06 TIMELINE | Super timeline across all artifacts in UTC with 100ns precision where the source has it |
-| 07 ARTIFACTS | One entry per parsed file: hashes, notes and every table the parser produced, each exportable to CSV |
-| 08 REJECTED | Files no tool accepts, with the reason and what was done instead, plus guidance on inputs that cannot be accepted |
-| 09 TOOLS | Every Eric Zimmerman tool plus Volatility 3 and Velociraptor: what it does, what it accepts, how Sudo-Z covers it, and whether it works on the website or needs the home install |
+| 04 STRINGS | bstrings search over every loaded file (and, if you tick it, the raw bytes of whole disk and memory images): find text (`--ls`), a regex (`--lr`), any of bstrings' 27 built-in patterns by name plus CTF flags, encoded PowerShell, NTLM hashes and private keys, a list of strings (`--fs`) or every string. Min/max length, ASCII or Unicode only, case sensitivity, only-the-match, file filter and max file size. Hits show file, byte offset and encoding in a sortable, filterable grid. On the home install it can also run the real bstrings.exe on any folder and load its output into the same grid |
+| 05 FINDINGS | Every finding with severity, category, tool, source file, the reason it fired, a NEXT step, ATT&CK links and the raw evidence. Filter by severity, category or free text |
+| 06 INDICATORS | Atomic IOCs grouped by type with counts, sources and context. Defang toggle and copy-all |
+| 07 TIMELINE | Super timeline across all artifacts in UTC with 100ns precision where the source has it |
+| 08 ARTIFACTS | One entry per parsed file: hashes, notes and every table the parser produced, each exportable to CSV |
+| 09 REJECTED | Files no tool accepts, with the reason and what was done instead, plus guidance on inputs that cannot be accepted |
+| 10 TOOLS | Every Eric Zimmerman tool plus Volatility 3 and Velociraptor: what it does, what it accepts, how Sudo-Z covers it, and whether it works on the website or needs the home install |
 
 Exports: Markdown IOC report (with Leads to investigate, Programs to review, and a Next line per finding), full JSON, programs CSV, leads CSV, findings CSV, indicators CSV and a timeline CSV that opens directly in Timeline Explorer.
 
