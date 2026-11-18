@@ -59,6 +59,11 @@ def vol_cmd():
         except Exception: continue
     return None, None
 
+# EZ tools that refuse to run off Windows (verified on Linux CI runners)
+WINDOWS_ONLY = {
+    'SrumECmd': 'Windows-only: needs the Windows ESE libraries. Sudo-Z parses SRUM itself on any OS.',
+    'SumECmd': 'Windows-only: needs the Windows ESE libraries. Sudo-Z reads SUM with its own ESE parser.',
+}
 EZ_TOOLS = ['EvtxECmd', 'PECmd', 'LECmd', 'JLECmd', 'RECmd', 'AmcacheParser', 'AppCompatCacheParser', 'MFTECmd', 'RBCmd', 'SBECmd', 'SrumECmd', 'SumECmd', 'SQLECmd', 'WxTCmd', 'RecentFileCacheParser', 'bstrings']
 
 def ez_tools():
@@ -71,12 +76,27 @@ def ez_tools():
                 found[t] = str(p); break
             if t not in found and not IS_WIN:
                 for p in root.rglob(t + '.exe'):
-                    dll = p.with_suffix('.dll')
-                    if dll.exists(): found[t] = str(dll); break
+                    found[t] = str(p.with_suffix('.dll')) if p.with_suffix('.dll').exists() else str(p)  # .exe only = Windows-only build
+                    break
     return found
 
+def dotnet_path():
+    p = HOME / 'dotnet' / ('dotnet.exe' if IS_WIN else 'dotnet')
+    return str(p) if p.exists() else shutil.which('dotnet')
+
+def tool_env():
+    env = dict(os.environ)
+    private = HOME / 'dotnet'
+    if private.exists():
+        env['DOTNET_ROOT'] = str(private)  # lets framework-dependent .exe builds find the private runtime
+        env['PATH'] = str(private) + os.pathsep + env.get('PATH', '')
+    return env
+
 def ez_cmd(path):
-    return [path] if path.lower().endswith('.exe') else (['dotnet', path] if shutil.which('dotnet') else None)
+    if path.lower().endswith('.exe'):
+        return [path] if IS_WIN else None
+    d = dotnet_path()
+    return [d, path] if d else None
 
 CAPS = {}
 def detect_caps():
@@ -85,7 +105,7 @@ def detect_caps():
     CAPS.update({
         'local': True, 'version': version(), 'os': platform.system(), 'python': platform.python_version(),
         'vol3': {'available': bool(vc), 'version': vv},
-        'ez': {'tools': sorted(ez_tools().keys()), 'dotnet': bool(shutil.which('dotnet')) or IS_WIN},
+        'ez': {'tools': sorted(ez_tools().keys()), 'dotnet': bool(dotnet_path())},
         'runs': str(RUNS),
     })
     CAPS['_volcmd'] = vc
@@ -142,11 +162,14 @@ def ez_plan(root):
     if find('*.pf'): add('PECmd', ['-d', str(r), '-q'], 'prefetch')
     if find('*.lnk'): add('LECmd', ['-d', str(r), '-q'], 'shortcuts')
     if find('*Destinations-ms'): add('JLECmd', ['-d', str(r), '-q'], 'jump lists')
+    # dirty hives: replay .LOG1/.LOG2 when they were collected, otherwise tell the tool to proceed without them (--nl)
+    has_logs = lambda h: any(h.with_name(h.name + ext).exists() for ext in ('.LOG1', '.LOG2', '.LOG', '.log1', '.log2', '.log'))
     if any(find(n) for n in ['NTUSER.DAT', 'SYSTEM', 'SOFTWARE', 'SAM', 'UsrClass.dat']) and 'RECmd' in tools:
         batch = next(Path(tools['RECmd']).parent.rglob('Kroll_Batch.reb'), None) or next(Path(tools['RECmd']).parent.rglob('*.reb'), None)
-        if batch: add('RECmd', ['-d', str(r), '--bn', str(batch), '--nl'], 'registry (batch)')
-    for h in find('Amcache.hve'): add('AmcacheParser', ['-f', str(h), '-i'], 'amcache')
-    for h in find('SYSTEM'): add('AppCompatCacheParser', ['-f', str(h)], 'shimcache')
+        any_logs = bool(find('*.LOG1') or find('*.LOG2'))
+        if batch: add('RECmd', ['-d', str(r), '--bn', str(batch)] + ([] if any_logs else ['--nl']), 'registry (batch)')
+    for h in find('Amcache.hve'): add('AmcacheParser', ['-f', str(h), '-i'] + ([] if has_logs(h) else ['--nl']), 'amcache')
+    for h in find('SYSTEM'): add('AppCompatCacheParser', ['-f', str(h)] + ([] if has_logs(h) else ['--nl']), 'shimcache')
     for m in find('$MFT'): add('MFTECmd', ['-f', str(m)], '$MFT')
     for j in find('$J'): add('MFTECmd', ['-f', str(j)], '$J')
     if find('$I*'): add('RBCmd', ['-d', str(r), '-q'], 'recycle bin')
@@ -164,16 +187,21 @@ def run_ez(job, root):
     tools = ez_tools()
     for tool, args, label in plan:
         job['current'] = f'{tool} ({label})'
+        if not IS_WIN and tool in WINDOWS_ONLY:
+            job['results'].append({'tool': tool, 'label': label, 'ok': False, 'skipped': True, 'error': WINDOWS_ONLY[tool]}); job['done'] += 1; continue
         out = Path(job['dir']) / tool
         out.mkdir(exist_ok=True)
         cmd = ez_cmd(tools[tool])
         if not cmd:
-            job['results'].append({'tool': tool, 'ok': False, 'error': '.NET runtime (dotnet) not found'}); job['done'] += 1; continue
+            job['results'].append({'tool': tool, 'ok': False, 'error': 'Windows-only build on this OS' if tools[tool].lower().endswith('.exe') else '.NET runtime not found (sudo-z setup dotnet)'}); job['done'] += 1; continue
         jlog(job, f'{tool} {" ".join(args)}')
         try:
-            p = subprocess.run(cmd + args + ['--csv', str(out)], capture_output=True, text=True, timeout=7200)
+            p = subprocess.run(cmd + args + ['--csv', str(out)], capture_output=True, text=True, timeout=7200, env=tool_env(), stdin=subprocess.DEVNULL)
             files = [str(x.relative_to(job['dir'])) for x in out.rglob('*') if x.is_file()]
-            job['results'].append({'tool': tool, 'label': label, 'ok': p.returncode == 0, 'files': files, 'error': (p.stderr or '')[-600:] if p.returncode else ''})
+            err = ''
+            if p.returncode:
+                err = ((p.stderr or '').strip() or (p.stdout or '').strip())[-800:] or f'exit code {p.returncode}'
+            job['results'].append({'tool': tool, 'label': label, 'ok': p.returncode == 0, 'files': files, 'error': err, 'exit': p.returncode})
         except Exception as e:
             job['results'].append({'tool': tool, 'label': label, 'ok': False, 'error': str(e)})
         job['done'] += 1

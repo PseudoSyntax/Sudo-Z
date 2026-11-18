@@ -1,0 +1,89 @@
+name: Real tools (EZ + Volatility 3)
+
+# Installs Sudo-Z from this commit with every requirement (private .NET 10,
+# the original Eric Zimmerman tools, Volatility 3), runs the real EZ tools
+# through Sudo-Z's runner on public sample evidence, and compares their
+# output with Sudo-Z's own parsers.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    name: Windows (real EZ tools)
+    runs-on: windows-latest
+    timeout-minutes: 75
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Stage sample evidence (KAPE layout)
+        shell: bash
+        run: bash test/stage-evidence.sh "$RUNNER_TEMP/ev"
+      - name: Install Sudo-Z from this commit with all requirements
+        shell: powershell
+        run: .\install.ps1 -Source . -Dir "$env:RUNNER_TEMP\sz" -NoShortcut -Full
+      - name: Requirements status
+        shell: powershell
+        run: '& "$env:RUNNER_TEMP\sz\sudo-z.cmd" setup status'
+      - name: Volatility 3 has every plugin the runner uses
+        shell: powershell
+        run: python test/vol-plugins.py "$env:RUNNER_TEMP\sz\venv\Scripts\vol.exe" tools/server.py
+      - name: Run the original EZ tools through the Sudo-Z runner
+        shell: powershell
+        run: |
+          Start-Process -FilePath "$env:RUNNER_TEMP\sz\sudo-z.cmd" -ArgumentList 'start','-Port','8799','-NoBrowser'
+          Start-Sleep 10
+          python test/ez-run.py 8799 "$env:RUNNER_TEMP\ev\evidence" "$env:RUNNER_TEMP\ezjob.json" --require EvtxECmd,PECmd,LECmd,JLECmd,AmcacheParser,AppCompatCacheParser,MFTECmd,RBCmd,SrumECmd,WxTCmd | Tee-Object -FilePath ez.md
+          $code = $LASTEXITCODE
+          "## Original EZ tools via the Sudo-Z runner (Windows)" | Add-Content $env:GITHUB_STEP_SUMMARY
+          Get-Content ez.md | Where-Object { $_ -match '^\|' -or $_ -match 'REQUIRED' } | Add-Content $env:GITHUB_STEP_SUMMARY
+          exit $code
+      - name: Sudo-Z on the same evidence
+        if: always()
+        shell: bash
+        run: node cli/sudo-z.mjs "$RUNNER_TEMP/ev/evidence" -o "$RUNNER_TEMP/szout"
+      - name: Compare Sudo-Z with the original tools
+        if: always()
+        shell: bash
+        run: |
+          dir=$(python -c "import json,sys;print(json.load(open(sys.argv[1]))['dir'])" "$RUNNER_TEMP/ezjob.json")
+          node test/compare-ez.mjs "$dir" "$RUNNER_TEMP/szout/report.json" | tee -a "$GITHUB_STEP_SUMMARY"
+          cp -r "$dir" "$RUNNER_TEMP/ez-output"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-ez-vs-sudoz
+          path: |
+            ${{ runner.temp }}/ez-output
+            ${{ runner.temp }}/szout
+            ${{ runner.temp }}/ezjob.json
+
+  linux:
+    name: Linux (what runs off Windows)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stage sample evidence
+        run: bash test/stage-evidence.sh "$RUNNER_TEMP/ev"
+      - name: Install Sudo-Z from this commit with all requirements
+        run: SUDOZ_SOURCE=. SUDOZ_FULL=1 SUDOZ_DIR="$RUNNER_TEMP/sz" SUDOZ_BIN="$RUNNER_TEMP/bin" bash install.sh
+      - name: Requirements status
+        run: '"$RUNNER_TEMP/bin/sudo-z" setup status'
+      - name: Volatility 3 has every plugin the runner uses
+        run: python3 test/vol-plugins.py "$RUNNER_TEMP/sz/venv/bin/vol" tools/server.py
+      - name: EZ tools that run on Linux
+        run: |
+          (SUDOZ_NO_BROWSER=1 "$RUNNER_TEMP/bin/sudo-z" start 8799 > /tmp/srv.log 2>&1 &) ; sleep 6
+          python3 test/ez-run.py 8799 "$RUNNER_TEMP/ev/evidence" "$RUNNER_TEMP/ezjob.json" | tee ez.md
+          { echo "## Original EZ tools on Linux"; grep -E '^\|' ez.md; } >> "$GITHUB_STEP_SUMMARY"

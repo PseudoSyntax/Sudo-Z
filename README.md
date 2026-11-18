@@ -31,9 +31,19 @@ Then:
 | `sudo-z` | Starts the console on `http://localhost:8765` and opens your browser |
 | `sudo-z update` | Pulls the newest version from GitHub and replaces the old code |
 | `sudo-z version` | Shows the installed version and whether an update is out |
-| `sudo-z setup` | Adds the home-only extras: Volatility 3 for memory images and the original Eric Zimmerman tools (`sudo-z setup vol` or `sudo-z setup ez` for just one) |
+| `sudo-z setup` | Downloads the requirements for the home-only extras: a private .NET 10 runtime, the original Eric Zimmerman tools and Volatility 3 (`sudo-z setup status` shows what is installed) |
 | `sudo-z cli triage.zip -o out` | Runs the analysis headless (needs Node 18+) |
 | `sudo-z uninstall` | Removes it |
+
+Want everything in one go? Add the requirements to the install command:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/PseudoSyntax/Sudo-Z/main/install.ps1))) -Full
+```
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/PseudoSyntax/Sudo-Z/main/install.sh | SUDOZ_FULL=1 bash
+```
 
 On Windows open a new terminal after installing so `sudo-z` is on your PATH, or use the Start Menu shortcut. The launcher also tells you when an update is available.
 
@@ -45,8 +55,20 @@ Opening `index.html` straight from disk will not work, because browsers block ES
 
 The website runs everything Sudo-Z rebuilt in JavaScript, in your browser. A browser cannot run Python or Windows programs, so a few things only work in the home install, where `sudo-z` starts a small local server (Python 3.8+, standard library only) next to the console:
 
-* **Volatility 3 on memory images.** Run `sudo-z setup vol` once (it creates a private Python environment and installs Volatility 3), then type the image path into the LOCAL ENGINE panel. The image is read in place, so multi-GB dumps never pass through the browser. The results feed straight into the same report.
-* **The original Eric Zimmerman tools.** Run `sudo-z setup ez` once (it uses Eric's own Get-ZimmermanTools script and needs the .NET 10 runtime), then point the LOCAL ENGINE panel at an artifact folder. Sudo-Z runs the matching tools the way KAPE's EZParser module does and writes their CSVs for Timeline Explorer. Useful for validating Sudo-Z's findings against the originals.
+* **Volatility 3 on memory images.** Type the image path into the LOCAL ENGINE panel. The image is read in place, so multi-GB dumps never pass through the browser, and the results feed straight into the same report.
+* **The original Eric Zimmerman tools.** Point the LOCAL ENGINE panel at an artifact folder and Sudo-Z runs the matching tools the way KAPE's EZParser module does, writing their CSVs for Timeline Explorer. Useful for checking Sudo-Z's findings against the originals.
+
+### Requirements download
+
+`sudo-z setup` fetches everything these need, privately inside the Sudo-Z folder: no admin rights, nothing installed system-wide, and `sudo-z uninstall` removes it all.
+
+| Requirement | Where it comes from | Notes |
+|---|---|---|
+| .NET 10 runtime | Microsoft's official `dotnet-install` script | Skipped if .NET 10 is already installed. Windows also gets the Desktop runtime for the GUI tools |
+| Eric Zimmerman tools | Eric's own `Get-ZimmermanTools` on Windows; `tools/ez_fetch.py` (same download list, no PowerShell needed) on Linux/macOS | The command-line tools run on Windows, Linux and macOS. SrumECmd and SumECmd are Windows-only, and so are the GUI tools |
+| Python 3 + Volatility 3 | Your Python if you have 3.8+, otherwise a private Python 3.12 installed with `uv` | Installed into its own venv. If the optional extras will not build on a very new Python, the core installs and the extras are tried one by one |
+
+Run `sudo-z setup ez`, `sudo-z setup vol` or `sudo-z setup dotnet` to install just one, and `sudo-z setup status` to check.
 
 The local server only listens on localhost, rejects other Host headers and requires a custom header on its API, so other websites open in your browser cannot drive it. Without Python the launcher falls back to serving the console only.
 
@@ -578,6 +600,22 @@ No dependencies, no build step, no network calls with your data.
 I tested the parsers against public sample corpora rather than synthetic files: the plaso project test data [2] (event logs, Prefetch v17 to v31 including MAM compressed files, LNKs, jump lists, SYSTEM / SOFTWARE / NTUSER / Amcache hives, $MFT, USN journal, Recycle Bin, Chrome, Firefox, ActivitiesCache, IIS logs) and attack-scenario event logs from EVTX-ATTACK-SAMPLES [3]. Every sample parsed with zero record errors, and the attack logs produced the expected detections (log clearing, Squiblydoo, rundll32 and mshta proxy execution, pass-the-hash logons, svcctl lateral movement, malicious services, Defender hits, LSASS dumping via PowerShell).
 
 Transaction log replay was checked against msuhanov's dirty test hives [5]: new-format replay is byte-identical to Windows 10's own recovery, and old-format replay matches apart from a hive bin timestamp Windows rewrites. The ESE reader was tested on the plaso SRUDB.dat, WebCacheV01.dat and Windows.edb samples, and the Volatility 3 module against output in the exact column layout of Volatility 3.28's plugins, with the local runner driving a real Volatility 3.28.3 install.
+
+### Checked against the original tools
+
+Every pull request and push to `main` runs the real-tools workflow. A Windows runner installs Sudo-Z with `-Full` (private .NET 10, all EZ tools, Volatility 3), runs the original tools through the Sudo-Z runner on public sample evidence laid out like a KAPE collection, and compares their output with Sudo-Z's own parsers. Latest results:
+
+| Original tool | Compared | Result |
+|---|---|---|
+| EvtxECmd | records per log (4 logs, 5,136 records) | identical |
+| PECmd | run count per Prefetch file (8 files) | identical |
+| AppCompatCacheParser | ShimCache entries | 330 = 330 |
+| AmcacheParser | SHA1s | 1,102 = 1,102, all in common |
+| MFTECmd | file records | 13,060 = 13,060 |
+| RBCmd, JLECmd, SBECmd, WxTCmd, SrumECmd | rows per artifact | identical |
+| LECmd | resolved target per shortcut | identical |
+
+All 13 EZ tools the runner uses completed on Windows. On Linux 11 of 13 ran under .NET 10; SrumECmd and SumECmd stop with "Non-Windows platforms not supported" because they need Windows ESE libraries, which is where Sudo-Z's own ESE parser earns its keep. Volatility 3 (2.28.2 from pip) was checked to contain every plugin the runner uses on both platforms.
 
 ## Limits
 

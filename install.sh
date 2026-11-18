@@ -25,7 +25,6 @@ die() { printf '\033[31m[sudo-z] %s\033[0m\n' "$*" >&2; exit 1; }
 command -v curl >/dev/null || die "curl is required"
 command -v tar >/dev/null || die "tar is required"
 
-say "checking $REPO@$BRANCH"
 sha_of() {
   # 1) GitHub API as plain text (uses GITHUB_TOKEN if set)
   # 2) git ref advertisement, which is not subject to the API rate limit
@@ -37,8 +36,15 @@ sha_of() {
   fi
   printf '%s' "$s"
 }
-LATEST="$(sha_of "$BRANCH")"
-[ -n "$LATEST" ] || die "could not read the latest commit from GitHub"
+if [ -n "${SUDOZ_SOURCE:-}" ]; then
+  [ -f "$SUDOZ_SOURCE/js/engine.js" ] || die "$SUDOZ_SOURCE is not a Sudo-Z folder"
+  LATEST="$(git -C "$SUDOZ_SOURCE" rev-parse HEAD 2>/dev/null || echo "local-$(date +%Y%m%d%H%M%S)")"
+  say "installing from local folder $SUDOZ_SOURCE"
+else
+  say "checking $REPO@$BRANCH"
+  LATEST="$(sha_of "$BRANCH")"
+  [ -n "$LATEST" ] || die "could not read the latest commit from GitHub"
+fi
 CURRENT="$(cat "$VER" 2>/dev/null || true)"
 
 if [ "${SUDOZ_FORCE:-0}" != "1" ] && [ "$CURRENT" = "$LATEST" ] && [ -f "$APP/index.html" ]; then
@@ -46,8 +52,12 @@ if [ "${SUDOZ_FORCE:-0}" != "1" ] && [ "$CURRENT" = "$LATEST" ] && [ -f "$APP/in
 else
   mkdir -p "$DIR"
   TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-  say "downloading ${LATEST:0:7}"
-  curl -fsSL "https://codeload.github.com/$REPO/tar.gz/$LATEST" | tar -xz -C "$TMP"
+  if [ -n "${SUDOZ_SOURCE:-}" ]; then
+    mkdir -p "$TMP/Sudo-Z-local" && (cd "$SUDOZ_SOURCE" && tar --exclude=.git --exclude=node_modules -cf - .) | tar -xf - -C "$TMP/Sudo-Z-local"
+  else
+    say "downloading ${LATEST:0:7}"
+    curl -fsSL "https://codeload.github.com/$REPO/tar.gz/$LATEST" | tar -xz -C "$TMP"
+  fi
   SRC="$(find "$TMP" -mindepth 1 -maxdepth 1 -type d | head -n1)"
   [ -f "$SRC/index.html" ] && [ -f "$SRC/js/engine.js" ] || die "download does not look like Sudo-Z; old version left in place"
   rm -rf "$APP.old"
@@ -66,7 +76,13 @@ EOF
 chmod +x "$BIN/sudo-z" "$APP/tools/sudo-z.sh" 2>/dev/null || true
 case ":$PATH:" in *":$BIN:"*) ;; *) say "add $BIN to your PATH, e.g.: echo 'export PATH=\"$BIN:\$PATH\"' >> ~/.bashrc";; esac
 
+if [ "${SUDOZ_FULL:-0}" = "1" ]; then
+  say "installing requirements (.NET 10, EZ tools, Volatility 3)"
+  SUDOZ_DIR="$DIR" bash "$APP/tools/setup.sh" all || say "some requirements failed; rerun: sudo-z setup"
+fi
+
 echo
 echo "  Start:   sudo-z"
 echo "  Update:  sudo-z update"
+echo "  Extras:  sudo-z setup   (.NET 10, original EZ tools, Volatility 3; private, no sudo)"
 echo

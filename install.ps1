@@ -19,7 +19,9 @@ param(
   [string]$Repo = "PseudoSyntax/Sudo-Z",
   [switch]$Force,
   [switch]$NoShortcut,
-  [switch]$Quiet
+  [switch]$Quiet,
+  [string]$Source,   # install from a local folder instead of GitHub (testing / offline)
+  [switch]$Full      # also install requirements: .NET 10, original EZ tools, Volatility 3
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -44,9 +46,17 @@ function Get-LatestSha([string]$Repo, [string]$Branch, [int]$Timeout = 30) {
   return $null
 }
 
-Say "[sudo-z] checking $Repo@$Branch" 'DarkYellow'
-$latest = Get-LatestSha $Repo $Branch 30
-if (-not $latest) { throw 'Could not reach GitHub to find the latest version (check your connection or proxy).' }
+if ($Source) {
+  $Source = (Resolve-Path $Source).Path
+  if (-not (Test-Path (Join-Path $Source 'js\engine.js'))) { throw "$Source is not a Sudo-Z folder" }
+  $latest = 'local-' + (Get-Date -Format 'yyyyMMddHHmmss')
+  try { $g = (& git -C $Source rev-parse HEAD 2>$null); if ($g -match '^[0-9a-f]{40}$') { $latest = $g } } catch { }
+  Say "[sudo-z] installing from local folder $Source" 'DarkYellow'
+} else {
+  Say "[sudo-z] checking $Repo@$Branch" 'DarkYellow'
+  $latest = Get-LatestSha $Repo $Branch 30
+  if (-not $latest) { throw 'Could not reach GitHub to find the latest version (check your connection or proxy).' }
+}
 $current = if (Test-Path $VerFile) { (Get-Content $VerFile -Raw).Trim() } else { '' }
 
 if (-not $Force -and $current -eq $latest -and (Test-Path (Join-Path $App 'index.html'))) {
@@ -56,11 +66,18 @@ if (-not $Force -and $current -eq $latest -and (Test-Path (Join-Path $App 'index
   $tmp = Join-Path ([IO.Path]::GetTempPath()) ("sudo-z-" + [Guid]::NewGuid().ToString('N'))
   New-Item -ItemType Directory -Path $tmp | Out-Null
   try {
-    $zip = Join-Path $tmp 'src.zip'
-    Say "[sudo-z] downloading $($latest.Substring(0,7))"
-    Invoke-WebRequest "https://codeload.github.com/$Repo/zip/$latest" -OutFile $zip -UseBasicParsing -TimeoutSec 300
-    Expand-Archive -Path $zip -DestinationPath $tmp -Force
-    $src = Get-ChildItem -Path $tmp -Directory | Select-Object -First 1
+    if ($Source) {
+      $copy = Join-Path $tmp 'Sudo-Z-local'
+      New-Item -ItemType Directory -Path $copy | Out-Null
+      Get-ChildItem -Path $Source -Force | Where-Object { $_.Name -notin '.git', 'node_modules' } | Copy-Item -Destination $copy -Recurse -Force
+      $src = Get-Item $copy
+    } else {
+      $zip = Join-Path $tmp 'src.zip'
+      Say "[sudo-z] downloading $($latest.Substring(0,7))"
+      Invoke-WebRequest "https://codeload.github.com/$Repo/zip/$latest" -OutFile $zip -UseBasicParsing -TimeoutSec 300
+      Expand-Archive -Path $zip -DestinationPath $tmp -Force
+      $src = Get-ChildItem -Path $tmp -Directory | Select-Object -First 1
+    }
     if (-not $src -or -not (Test-Path (Join-Path $src.FullName 'index.html')) -or -not (Test-Path (Join-Path $src.FullName 'js\engine.js'))) {
       throw 'Downloaded archive does not look like Sudo-Z (index.html or js\engine.js missing). Old version left in place.'
     }
@@ -99,7 +116,13 @@ if (-not $NoShortcut) {
   } catch { }
 }
 
+if ($Full) {
+  Say '[sudo-z] installing requirements (.NET 10, EZ tools, Volatility 3)' 'DarkYellow'
+  & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $App 'tools\setup.ps1') -What all -Dir $Dir
+}
+
 Say ""
 Say "  Start:   sudo-z            (or Start Menu > Sudo-Z)" 'White'
+Say "  Extras:  sudo-z setup      (.NET 10, original EZ tools, Volatility 3; private, no admin)" 'White'
 Say "  Update:  sudo-z update" 'White'
 Say ""
