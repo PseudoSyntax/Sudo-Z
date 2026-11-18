@@ -59,6 +59,8 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' 'http://localhost:8793/api/image/read?path=/tmp/dfvfs/ext2.E01&off=0&len=3')" = 403
           curl -s -H 'X-Sudo-Z: 1' -X POST -d '{"source":"C:"}' http://localhost:8793/api/kape/run | grep -q 'Windows program'
           curl -fsS -H 'X-Sudo-Z: 1' http://localhost:8793/api/jobs | grep -q '^\['
+      - name: bstrings search (chunked scanner, built-in patterns)
+        run: node test/bstrings.mjs
       - name: Volatility code injection checks
         run: node test/vol-inject.mjs
       - name: Volatility rootkit checks (SSDT, KTHREAD service tables, DKOM)

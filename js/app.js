@@ -2,6 +2,7 @@
 import { CATALOG, NOT_ACCEPTED_HELP, availability } from './catalog.js';
 import { markdown, csv, timelineCsv, findingsCsv, indicatorsCsv, leadsCsv, programsCsv, mitreSummary, indicatorLabel, defang } from './report.js';
 import { Grid, datasets } from './grid.js';
+import { BUILTIN } from './core/bsearch.js';
 import { PROGRAM_COLUMNS } from './ioc/programs.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -16,7 +17,7 @@ const SEVS = ['critical', 'high', 'medium', 'low', 'info'];
 const SEV_SHORT = { critical: 'CRIT', high: 'HIGH', medium: 'MED', low: 'LOW', info: 'INFO' };
 const isTimeCol = (c) => /time|created|modified|accessed|last|first|start|end|deleted|write|logon|run|when|date|visit/i.test(c);
 
-const S = { staged: [], rep: null, tab: 'sitrep', f: { sev: new Set(['critical', 'high', 'medium', 'low', 'info']), q: '', cat: '' }, tl: { q: '', tool: '', page: 0 }, ind: { q: '', type: '', defang: true }, art: { q: '' }, inv: { q: '' }, grid: { ds: null, tagsBy: {}, widthsBy: {}, q: '', filters: {}, hidden: new Set(), collapsed: new Set(), group: -1 } };
+const S = { staged: [], rep: null, tab: 'sitrep', f: { sev: new Set(['critical', 'high', 'medium', 'low', 'info']), q: '', cat: '' }, tl: { q: '', tool: '', page: 0 }, ind: { q: '', type: '', defang: true }, art: { q: '' }, inv: { q: '' }, so: { mode: 'builtin', query: '', list: '', patterns: ['url3986', 'ipv4', 'email', 'unc', 'flag', 'pwsh_enc'], min: 3, max: 0, ascii: true, unicode: true, caseSensitive: false, onlyMatch: true, fileFilter: '', maxSizeMb: 0, images: false, limit: 200000 }, sgrid: { ds: null, tagsBy: {}, widthsBy: {}, q: '', filters: {}, hidden: new Set(), collapsed: new Set(), group: -1 }, grid: { ds: null, tagsBy: {}, widthsBy: {}, q: '', filters: {}, hidden: new Set(), collapsed: new Set(), group: -1 } };
 
 // ---------------------------------------------------------------- clock
 setInterval(() => { $('#clock').textContent = new Date().toISOString().slice(11, 19) + ' UTC'; }, 1000);
@@ -66,6 +67,8 @@ $('#run').addEventListener('click', async () => {
   const files = [];
   for (const s of S.staged) files.push(s.http ? { name: s.name, http: s.http } : { name: s.name, file: s.file }); // the worker reads them (disk images lazily)
   let worker;
+  try { S.worker?.terminate(); } catch { }
+  S.worker = null; S.kept = null; S.strings = null;
   try { worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' }); }
   catch { worker = null; }
   const done = (rep) => { S.rep = rep; setProg(1, `done in ${(rep.meta.durationMs / 1000).toFixed(1)}s`); btn.disabled = false; $('#clear').disabled = false; onReport(); };
@@ -73,7 +76,8 @@ $('#run').addEventListener('click', async () => {
     worker.onmessage = (e) => {
       const m = e.data;
       if (m.type === 'progress') setProg(m.p, m.label);
-      else if (m.type === 'done') { done(m.rep); worker.terminate(); }
+      else if (m.type === 'done') { S.worker = worker; done(m.rep); } // kept alive: it holds the file bytes for STRINGS searches
+      else if (m.type === 'sprogress' || m.type === 'strings' || m.type === 'serror') S.onStrings?.(m);
       else if (m.type === 'error') { setProg(0, 'ERROR: ' + m.message); console.error(m.stack); btn.disabled = false; worker.terminate(); }
     };
     worker.onerror = async (e) => { console.warn('worker failed, running on main thread', e); worker.terminate(); await mainThread(files, done); };
@@ -86,7 +90,7 @@ async function mainThread(files, done) {
   const inputs = [];
   const { fromHttp } = await import('./image/source.js');
   for (const f of files) if (f.http) inputs.push({ name: f.name, src: fromHttp(`/api/image/read?path=${encodeURIComponent(f.http.path)}`, f.http.size, f.name, { 'X-Sudo-Z': '1' }) }); else inputs.push(/\.(e01|e\d\d|raw|dd|img|\d{3}|vhdx?|qcow2?)$/i.test(f.name) || f.file.size > 512 * 1024 ** 2 ? { name: f.name, src: fromBlob(f.file, f.name) } : { name: f.name, data: new Uint8Array(await f.file.arrayBuffer()) });
-  try { done(await analyze(inputs, { onProgress: setProg })); }
+  try { done(await analyze(inputs, { onProgress: setProg, onFiles: (k) => { S.kept = k; } })); }
   catch (e) { setProg(0, 'ERROR: ' + e.message); $('#run').disabled = false; }
 }
 function setProg(p, label) { $('#pfill').style.width = Math.round(p * 100) + '%'; $('#plabel').textContent = label || ''; }
@@ -128,7 +132,7 @@ function render() {
   const v = $('#view');
   if (S.tab === 'tools') return (v.innerHTML = toolsView());
   if (!S.rep) return (v.innerHTML = idleView());
-  ({ sitrep: sitrepView, investigate: investigateView, grid: gridView, findings: findingsView, indicators: indicatorsView, timeline: timelineView, artifacts: artifactsView, rejected: rejectedView })[S.tab](v);
+  ({ sitrep: sitrepView, investigate: investigateView, grid: gridView, strings: stringsView, findings: findingsView, indicators: indicatorsView, timeline: timelineView, artifacts: artifactsView, rejected: rejectedView })[S.tab](v);
 }
 
 // ---------------------------------------------------------------- idle
@@ -245,6 +249,94 @@ function gridView(v) {
   GRID.open(ds);
   $('#gds').addEventListener('change', (e) => { S.gridWant = e.target.value; gridView(v); });
   v.querySelectorAll('[data-chip]').forEach((b) => b.addEventListener('click', () => { S.grid.filters = { ...PROG_CHIPS[+b.dataset.chip][1] }; S.grid.q = ''; gridView(v); }));
+}
+
+// ---------------------------------------------------------------- STRINGS (bstrings)
+const PGROUPS = [
+  ['Network and IOCs', ['url3986', 'urlUser', 'ipv4', 'ipv6', 'email', 'unc', 'mac', 'win_path', 'reg_path', 'sid', 'guid', 'var_set']],
+  ['Encoded data and secrets', ['b64', 'pwsh_enc', 'bitlocker', 'ntlm', 'privkey', 'xml']],
+  ['CTF', ['flag']],
+  ['Crypto wallets', ['bitcoin', 'monero', 'aeon', 'bytecoin', 'dashcoin', 'dashcoin2', 'fantomcoin', 'sumokoin']],
+  ['Personal data', ['ssn', 'cc', 'usPhone', 'zip']],
+];
+const dedupe = (k) => { const have = new Set(k.files.map((f) => f.name)); return [...k.files, ...k.raw.filter((r) => !have.has(r.name))]; };
+function stringsSearch(opts, onMsg) {
+  if (S.worker) { S.onStrings = onMsg; S.worker.postMessage({ type: 'strings', opts }); return; }
+  const kept = S.kept || { files: [], raw: [] };
+  import('./core/bsearch.js').then(({ searchStrings }) => searchStrings(dedupe(kept), opts, (p, label) => onMsg({ type: 'sprogress', p, label })))
+    .then((res) => onMsg({ type: 'strings', res }), (e) => onMsg({ type: 'serror', message: e.message }));
+}
+function stringsView(v) {
+  const o = S.so;
+  const nfiles = S.rep.files.filter((f) => f.status !== 'rejected' || true).length;
+  v.innerHTML = `<div class="box"><div class="ph"><span class="code">S</span> BSTRINGS: search every loaded file for ASCII and Unicode strings</div><div class="body strings-form">
+    <div class="row">
+      <label>MODE <select id="smode">
+        <option value="builtin" ${o.mode === 'builtin' ? 'selected' : ''}>Built-in patterns (--lr name)</option>
+        <option value="text" ${o.mode === 'text' ? 'selected' : ''}>Find text (--ls)</option>
+        <option value="regex" ${o.mode === 'regex' ? 'selected' : ''}>Regular expression (--lr)</option>
+        <option value="list" ${o.mode === 'list' ? 'selected' : ''}>List of strings (--fs)</option>
+        <option value="all" ${o.mode === 'all' ? 'selected' : ''}>Every string (no filter)</option>
+      </select></label>
+      <input type="text" id="squery" placeholder="${o.mode === 'regex' ? 'regex, e.g. flag\\{[^}]+\\}' : 'text to find'}" value="${esc(o.query)}" ${o.mode === 'text' || o.mode === 'regex' ? '' : 'hidden'}>
+      <button class="btn" id="sgo">SEARCH</button>
+    </div>
+    <textarea id="slist" rows="4" placeholder="one string per line" ${o.mode === 'list' ? '' : 'hidden'}>${esc(o.list)}</textarea>
+    <div class="pats" ${o.mode === 'builtin' ? '' : 'hidden'}>${PGROUPS.map(([g, names]) => `<div class="pg"><b>${esc(g)}</b>${names.map((n) => `<label title="${esc(BUILTIN[n][0])}"><input type="checkbox" data-pat="${n}" ${o.patterns.includes(n) ? 'checked' : ''}> ${n}</label>`).join('')}</div>`).join('')}</div>
+    <div class="row opts">
+      <label>min (-m) <input type="number" id="smin" min="1" value="${o.min}"></label>
+      <label>max (-x, 0 = none) <input type="number" id="smax" min="0" value="${o.max}"></label>
+      <label class="chk"><input type="checkbox" id="sasc" ${o.ascii ? 'checked' : ''}> ASCII (-a)</label>
+      <label class="chk"><input type="checkbox" id="suni" ${o.unicode ? 'checked' : ''}> Unicode (-u)</label>
+      <label class="chk"><input type="checkbox" id="scase" ${o.caseSensitive ? 'checked' : ''}> case sensitive</label>
+      <label class="chk"><input type="checkbox" id="sro" ${o.onlyMatch ? 'checked' : ''}> only the match (--ro)</label>
+      <label>files matching <input type="text" id="sfilt" placeholder="name or regex (--mask)" value="${esc(o.fileFilter)}"></label>
+      <label>max file MB (--ms) <input type="number" id="sms" min="0" value="${o.maxSizeMb}"></label>
+      <label class="chk" title="Search the raw bytes of dropped disk and memory images too, not only the files pulled out of them. Slow on big images."><input type="checkbox" id="simg" ${o.images ? 'checked' : ''}> whole disk / memory images</label>
+      <label>result limit <input type="number" id="slim" min="1000" step="1000" value="${o.limit}"></label>
+    </div>
+    <div class="fine">Searches the ${nfiles} file(s) of the last analysis in this browser, including files pulled from disk images and zips. Offsets are byte offsets in each file (A = ASCII, U = UTF-16LE), like bstrings --off.${LOCAL.caps?.ez?.tools?.includes('bstrings') ? ' On this machine you can also run the real bstrings.exe on any folder: <a href="#" id="sreal">RUN REAL BSTRINGS</a>.' : ''}</div>
+    <div class="sstat" id="sstat">${S.strings ? esc(S.strings.summary) : ''}</div>
+  </div></div><div id="sgrid" class="dgrid" ${S.strings ? '' : 'hidden'}></div>`;
+  const read = () => {
+    Object.assign(o, { mode: $('#smode').value, query: $('#squery').value, list: $('#slist').value, min: Math.max(1, +$('#smin').value || 3), max: Math.max(0, +$('#smax').value || 0), ascii: $('#sasc').checked, unicode: $('#suni').checked, caseSensitive: $('#scase').checked, onlyMatch: $('#sro').checked, fileFilter: $('#sfilt').value.trim(), maxSizeMb: +$('#sms').value || 0, images: $('#simg').checked, limit: Math.max(1000, +$('#slim').value || 200000) });
+    o.patterns = [...v.querySelectorAll('[data-pat]:checked')].map((x) => x.dataset.pat);
+  };
+  $('#smode').addEventListener('change', () => { read(); stringsView(v); });
+  const go = () => {
+    read();
+    if ((o.mode === 'text' || o.mode === 'regex') && !o.query) { $('#sstat').textContent = 'Type something to search for.'; return; }
+    if (o.mode === 'regex') { try { new RegExp(o.query); } catch (e) { $('#sstat').textContent = 'Bad regex: ' + e.message; return; } }
+    if (o.mode === 'builtin' && !o.patterns.length) { $('#sstat').textContent = 'Pick at least one pattern.'; return; }
+    if (!o.ascii && !o.unicode) { $('#sstat').textContent = 'Turn on ASCII, Unicode or both.'; return; }
+    const opts = { ...o, query: o.mode === 'list' ? o.list : o.query, maxSize: o.maxSizeMb ? o.maxSizeMb * 1024 * 1024 : 0 };
+    $('#sgo').disabled = true; $('#sstat').textContent = 'scanning…'; const t0 = Date.now();
+    stringsSearch(opts, (m) => {
+      if (m.type === 'sprogress') { $('#sstat') && ($('#sstat').textContent = `scanning ${Math.round(m.p * 100)}%  ${m.label.split('/').pop()}`); return; }
+      $('#sgo') && ($('#sgo').disabled = false);
+      if (m.type === 'serror') { $('#sstat').textContent = 'Search failed: ' + m.message; return; }
+      const r = m.res;
+      S.strings = { rows: r.rows, n: (S.strings?.n || 0) + 1, summary: `${r.rows.length.toLocaleString()} hit(s) in ${r.files} file(s), ${(r.scanned / 1024 ** 2).toFixed(1)} MB scanned in ${((Date.now() - t0) / 1000).toFixed(1)}s${r.truncated ? ` (stopped at the ${o.limit.toLocaleString()} result limit)` : ''}` };
+      if (S.tab === 'strings') stringsView(v);
+    });
+  };
+  $('#sgo').addEventListener('click', go);
+  $('#squery')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+  $('#sreal')?.addEventListener('click', (e) => { e.preventDefault(); realBstrings(); });
+  if (S.strings) {
+    const rows = S.strings.rows;
+    const ds = { id: 'strings:' + S.strings.n, cols: ['File', 'Offset', 'Enc', 'Length', 'String', 'Pattern'], rows: () => rows.map((r) => [r[0], '0x' + Number(r[1]).toString(16).toUpperCase(), r[2], r[3], r[4], r[5]]), sevCol: -1, keyCols: [4] };
+    new Grid($('#sgrid'), S.sgrid, { onPivot: () => { const row = rows[S.sgrid.sel]; if (row) { S.inv.q = row[4].slice(0, 120); switchTab('investigate'); } } }).open(ds);
+  }
+}
+/** Home install: run the real bstrings.exe on a folder or file with the current options. */
+async function realBstrings() {
+  const path = prompt('Folder or file to run bstrings.exe on (searched recursively):'); if (!path) return;
+  const o = S.so;
+  const lr = o.mode === 'builtin' ? o.patterns[0] : o.mode === 'regex' ? o.query : '';
+  if (o.mode === 'builtin' && o.patterns.length > 1) alert(`bstrings.exe takes one --lr pattern per run; using "${o.patterns[0]}".`);
+  try { const j = await api('/api/bstrings/run', { path, ls: o.mode === 'text' ? o.query : '', lr, fs: o.mode === 'list' ? o.list : '', min: o.min, max: o.max, ascii: o.ascii, unicode: o.unicode, ro: o.onlyMatch, mask: o.fileFilter, ms: o.maxSizeMb }); LOCAL.mine.add(j.id); LOCAL.flash = 'bstrings.exe started; results load into STRINGS when it finishes'; pollJobs(); }
+  catch (e) { alert(e.message); }
 }
 
 // ---------------------------------------------------------------- INVESTIGATE
@@ -489,7 +581,7 @@ async function pollJobs() {
     const src = String(j.source || '').split(/[\\/]/).filter(Boolean).pop() || j.source || '';
     const st = j.status === 'running' ? 'RUN' : j.status === 'done' ? 'DONE' : 'FAIL';
     const pct = j.total ? Math.round((j.done / j.total) * 100) : null;
-    const loadable = j.status === 'done' && (j.kind === 'vol3' || j.kind === 'kape' || j.kind === 'ez');
+    const loadable = j.status === 'done' && (j.kind === 'vol3' || j.kind === 'kape' || j.kind === 'ez' || j.kind === 'bstrings');
     return `<div class="jb ${j.status}"><div class="r"><span><b>${esc(j.kind.toUpperCase())}</b> ${esc(src)}</span><span class="st">${st}${j.status === 'running' && pct != null ? ' ' + pct + '%' : ''} · ${ago(j.started)}</span></div>
       ${j.status === 'running' ? `<div class="bar"><span style="width:${pct ?? 30}%" class="${pct == null ? 'ind' : ''}"></span></div><div class="cur">${esc(j.current || '')}</div>` : ''}
       ${j.error ? `<div class="bad">${esc(j.error)}</div>` : ''}
@@ -498,8 +590,26 @@ async function pollJobs() {
   el.querySelectorAll('[data-load]').forEach((b) => b.addEventListener('click', () => loadJob(b.dataset.load)));
   el.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => api('/api/open', { job: b.dataset.open }).catch((e) => { LOCAL.flash = e.message; pollJobs(); })));
   // auto-load jobs started from this page when they finish
-  for (const j of jobs) if (LOCAL.auto && LOCAL.mine.has(j.id) && j.status === 'done' && !LOCAL.loaded.has(j.id) && (j.kind === 'vol3' || j.kind === 'kape' || j.kind === 'ez')) loadJob(j.id);
+  for (const j of jobs) if (LOCAL.auto && LOCAL.mine.has(j.id) && j.status === 'done' && !LOCAL.loaded.has(j.id) && (j.kind === 'vol3' || j.kind === 'kape' || j.kind === 'ez' || j.kind === 'bstrings')) loadJob(j.id);
   if (jobs.some((j) => j.status === 'running')) LOCAL.timer = setTimeout(pollJobs, 1500);
+}
+
+/** Real bstrings.exe output ("text<TAB>0xOFFSET (A|U)", ~ for --ro) into the STRINGS grid. */
+async function loadBstrings(job) {
+  const rows = [];
+  for (const r of job.results) {
+    if (!r.file) continue;
+    const res = await fetch(`/api/job/${job.id}/file/${r.file.split('/').map(encodeURIComponent).join('/')}`, { headers: { 'X-Sudo-Z': '1' } });
+    if (!res.ok) continue;
+    for (const line of (await res.text()).split(/\r?\n/)) {
+      if (!line) continue;
+      const m = line.match(/^(.*)\t~?0x([0-9A-F]+) \(([AU])\)$/i);
+      rows.push(m ? [r.source, parseInt(m[2], 16), m[3], m[1].length, m[1], 'bstrings.exe'] : [r.source, 0, '', line.length, line, 'bstrings.exe']);
+      if (rows.length >= 1000000) break;
+    }
+  }
+  S.strings = { rows, n: (S.strings?.n || 0) + 1, summary: `bstrings.exe: ${rows.length.toLocaleString()} hit(s) in ${job.results.length} file(s) under ${job.source}` };
+  if (S.rep) switchTab('strings'); else LOCAL.flash = 'bstrings.exe results are ready; run any analysis to open the STRINGS tab';
 }
 
 /** Pull a finished job's outputs into the staging list and run the analysis. */
@@ -507,6 +617,7 @@ async function loadJob(id) {
   if (LOCAL.loading) return; LOCAL.loading = true; LOCAL.loaded.add(id);
   try {
     const job = await api(`/api/job/${id}`);
+    if (job.kind === 'bstrings') { await loadBstrings(job); LOCAL.loading = false; pollJobs(); return; }
     const files = []; let skipped = 0;
     // EZ runner and KAPE !EZParser output: the CSVs Timeline Explorer would open
     const list = job.kind === 'ez' ? job.results.flatMap((r) => (r.files || []).filter((x) => /\.csv$/i.test(x)).map((file) => ({ file, csv: true })))

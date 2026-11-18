@@ -246,6 +246,43 @@ def run_ez(job, root):
         job['done'] += 1
     job['status'] = 'done'; job['current'] = ''
 
+# ------------------------------------------------------------------ bstrings.exe
+def run_bstrings(job, root, o):
+    tools = ez_tools(); exe = tools.get('bstrings'); cmd = ez_cmd(exe) if exe else None
+    if not cmd:
+        job['status'] = 'error'; job['error'] = 'bstrings not installed (sudo-z setup ez)' if not exe else '.NET runtime not found (sudo-z setup dotnet)'; return
+    d = Path(job['dir']); (d / 'out').mkdir(exist_ok=True)
+    rp = Path(root)
+    files = [rp] if rp.is_file() else [p for p in rp.rglob('*') if p.is_file()]
+    mask = (o.get('mask') or '').strip()
+    if mask:
+        try: rx = re.compile(mask, re.I); files = [p for p in files if rx.search(str(p))]
+        except re.error: files = [p for p in files if mask.lower() in str(p).lower()]
+    ms = float(o.get('ms') or 0)
+    if ms: files = [p for p in files if p.stat().st_size <= ms * 1024 * 1024]
+    files = files[:5000]
+    job['total'] = len(files)
+    args = ['--off', '-q', '-s', '-m', str(int(o.get('min') or 3))]
+    if int(o.get('max') or 0): args += ['-x', str(int(o['max']))]
+    if o.get('ascii') is False: args += ['-a', 'false']
+    if o.get('unicode') is False: args += ['-u', 'false']
+    if o.get('ls'): args += ['--ls', str(o['ls'])]
+    elif o.get('lr'): args += ['--lr', str(o['lr'])] + (['--ro'] if o.get('ro') else [])
+    elif o.get('fs'):
+        lst = d / 'strings.txt'; lst.write_text(str(o['fs']), encoding='utf-8'); args += ['--fs', str(lst)]
+    for i, f in enumerate(files):
+        job['current'] = f.name
+        out = d / 'out' / f'{i:05d}.txt'
+        try:
+            p = subprocess.run(cmd + ['-f', str(f), '-o', str(out)] + args, capture_output=True, text=True, timeout=3600, env=tool_env(), stdin=subprocess.DEVNULL)
+            n = sum(1 for _ in open(out, encoding='utf-8', errors='replace')) if out.exists() else 0
+            job['results'].append({'source': str(f), 'file': str(out.relative_to(d)).replace(os.sep, '/') if n else None, 'hits': n, 'ok': p.returncode == 0, 'error': ((p.stderr or '').strip() or (p.stdout or '').strip())[-300:] if p.returncode else ''})
+        except Exception as e:
+            job['results'].append({'source': str(f), 'file': None, 'hits': 0, 'ok': False, 'error': str(e)})
+        job['done'] += 1
+    jlog(job, f"{sum(r['hits'] for r in job['results'])} hits in {len(files)} file(s)")
+    job['status'] = 'done'; job['current'] = ''; job['finished'] = time.time()
+
 # ------------------------------------------------------------------ KAPE
 MOUNTABLE = ('.vhd', '.vhdx', '.iso')
 def psq(v): return "'" + str(v).replace("'", "''") + "'"
@@ -413,6 +450,12 @@ class Handler(SimpleHTTPRequestHandler):
             elif not os.path.isdir(src): return self.send_json({'error': f'source not found: {src}'}, 400)
             job = new_job('kape', 0); job['source'] = src; job['target'] = target
             threading.Thread(target=run_kape, args=(job, src, target, bool(body.get('modules')), bool(body.get('vss'))), daemon=True).start()
+            return self.send_json(job)
+        if u.path == '/api/bstrings/run':
+            root = os.path.expanduser(str(body.get('path', '')).strip().strip('"'))
+            if not os.path.exists(root): return self.send_json({'error': f'not found: {root}'}, 400)
+            job = new_job('bstrings', 0); job['source'] = root
+            threading.Thread(target=run_bstrings, args=(job, root, body), daemon=True).start()
             return self.send_json(job)
         if u.path == '/api/rescan':
             detect_caps(); return self.send_json({k: v for k, v in CAPS.items() if not k.startswith('_')})

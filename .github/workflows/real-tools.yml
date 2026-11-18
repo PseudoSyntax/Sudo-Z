@@ -45,6 +45,8 @@ jobs:
           "## Original EZ tools via the Sudo-Z runner (Windows)" | Add-Content $env:GITHUB_STEP_SUMMARY
           Get-Content ez.md | Where-Object { $_ -match '^\|' -or $_ -match 'REQUIRED' } | Add-Content $env:GITHUB_STEP_SUMMARY
           exit $code
+      - name: Real bstrings.exe through the Sudo-Z runner
+        run: python test/bstrings-run.py 8799 "$env:RUNNER_TEMP\ev\evidence"
       - name: Sudo-Z on the same evidence
         if: always()
         shell: bash
