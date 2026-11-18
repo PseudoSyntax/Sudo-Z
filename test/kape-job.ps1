@@ -60,9 +60,10 @@ diskpart /s (Join-Path $t 'dp2.txt') | Out-Host
 # 3. run the job through the server
 $env:SUDOZ_KAPE = Join-Path $t 'kape\kape.exe'
 $srv = Start-Process python -ArgumentList 'tools/server.py', '8794', '--no-browser' -PassThru -WindowStyle Hidden
-Start-Sleep 4
 $h = @{ 'X-Sudo-Z' = '1' }
-$caps = Invoke-RestMethod -Headers $h http://localhost:8794/api/caps
+$caps = $null
+for ($i = 0; $i -lt 60 -and -not $caps; $i++) { Start-Sleep 1; try { $caps = Invoke-RestMethod -Headers $h http://localhost:8794/api/caps } catch { } }
+if (-not $caps) { throw 'local server did not start within 60 s' }
 if (-not $caps.kape.available) { throw 'server did not find the stand-in kape.exe' }
 Write-Host "kape caps: available=$($caps.kape.available) admin=$($caps.kape.admin)"
 $job = Invoke-RestMethod -Headers $h -Method Post -ContentType 'application/json' -Body (@{ source = $vhd; target = '!SANS_Triage' } | ConvertTo-Json) http://localhost:8794/api/kape/run
