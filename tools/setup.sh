@@ -38,7 +38,7 @@ install_ez() {
   [ -x "$VENV/bin/python" ] && PY="$VENV/bin/python"
   say "downloading the original Eric Zimmerman tools to $EZ_DIR (.NET 10 builds)"
   "$PY" "$APP/tools/ez_fetch.py" "$EZ_DIR"
-  say "note: most EZ tools are Windows builds. On Linux/macOS the ones shipped as .dll run under the private .NET runtime; Windows-only .exe builds are skipped by the runner."
+  say "note: the command-line EZ tools ship as cross-platform .NET 10 builds and run here under the .NET runtime; the GUI tools (Timeline Explorer, Registry Explorer...) are Windows-only."
 }
 
 install_vol_python() {

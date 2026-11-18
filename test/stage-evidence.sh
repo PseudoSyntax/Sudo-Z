@@ -2,6 +2,7 @@
 # Build a KAPE-style evidence folder from public sample data (plaso test_data, EVTX-ATTACK-SAMPLES).
 # usage: bash test/stage-evidence.sh <work-dir>   -> <work-dir>/evidence/C/...
 set -euo pipefail
+export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*"   # stop Git Bash on Windows rewriting /paths
 W="$1"; mkdir -p "$W"; cd "$W"
 [ -d plaso ] || git clone -q --depth 1 --filter=blob:none --sparse https://github.com/log2timeline/plaso plaso
 git -C plaso sparse-checkout set --no-cone /test_data/evtx/System.evtx /test_data/winprefetch /test_data/example.lnk /test_data/NeroInfoTool.lnk \

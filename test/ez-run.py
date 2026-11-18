@@ -17,7 +17,10 @@ while job['status'] != 'done' and time.time() - t0 < 3600:
 json.dump(job, open(outp, 'w'), indent=1)
 print('\n| Tool | Input | Result | CSV files | Error |\n|---|---|---|---|---|')
 for r in job['results']:
-    print(f"| {r['tool']} | {r.get('label', '')} | {'OK' if r['ok'] else 'FAIL'} | {len(r.get('files', []))} | {(r.get('error') or '').strip().splitlines()[-1][:120] if r.get('error') else ''} |")
+    err = ' / '.join(l.strip() for l in (r.get('error') or '').strip().splitlines()[-3:])[:240]
+    print(f"| {r['tool']} | {r.get('label', '')} | {'OK' if r['ok'] else 'FAIL'} | {len(r.get('files', []))} | {err} |")
+for r in job['results']:
+    if not r['ok']: print(f"\n--- {r['tool']} output (tail) ---\n{r.get('error', '')}")
 print(f"\nrun folder: {job['dir']}")
 failed = [t for t in req if not any(r['tool'] == t and r['ok'] for r in job['results'])]
 if failed: print('REQUIRED TOOLS FAILED OR DID NOT RUN:', ', '.join(failed)); sys.exit(1)

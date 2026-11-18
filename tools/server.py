@@ -188,7 +188,10 @@ def run_ez(job, root):
         try:
             p = subprocess.run(cmd + args + ['--csv', str(out)], capture_output=True, text=True, timeout=7200, env=tool_env(), stdin=subprocess.DEVNULL)
             files = [str(x.relative_to(job['dir'])) for x in out.rglob('*') if x.is_file()]
-            job['results'].append({'tool': tool, 'label': label, 'ok': p.returncode == 0, 'files': files, 'error': (p.stderr or '')[-600:] if p.returncode else ''})
+            err = ''
+            if p.returncode:
+                err = ((p.stderr or '').strip() or (p.stdout or '').strip())[-800:] or f'exit code {p.returncode}'
+            job['results'].append({'tool': tool, 'label': label, 'ok': p.returncode == 0, 'files': files, 'error': err, 'exit': p.returncode})
         except Exception as e:
             job['results'].append({'tool': tool, 'label': label, 'ok': False, 'error': str(e)})
         job['done'] += 1
