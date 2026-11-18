@@ -11,6 +11,7 @@ import { isPrivateIp, decodePsB64 } from '../ioc/indicators.js';
 import { runBstrings, KEYWORD_RULES } from '../core/strings.js';
 
 const T = (title, columns, rows, note) => ({ title, columns, rows, note });
+export const MFT_ALL_COLS = ['Entry', 'Seq', 'InUse', 'Type', 'ParentPath', 'FileName', 'Size', 'SI Created', 'SI Modified', 'SI Accessed', 'SI RecordChange', 'FN Created', 'FN Modified', 'FN Accessed', 'FN RecordChange', 'Copied', 'ADS'];
 const fmtPath = (p) => normPath(p).replace(/^<vol>/, 'C:');
 
 // ---------------------------------------------------------------- PECmd
@@ -61,9 +62,17 @@ function gradeLnk(l, f, ctx, tool, extra = '') {
   return sev;
 }
 
+/** The B/M/A of the target as the shortcut saw it, plus the $MFT entry/sequence from the shell item (MACB comparison). */
+function lnkTimes(l, target, f, ctx, source) {
+  if (!target || !/^[a-z]:\\/i.test(target) || !(l.targetCreated || l.targetModified)) return;
+  const it = [...(l.idList || [])].reverse().find((x) => x && x.mft && x.mft.entry);
+  ctx.fileTimes({ path: target, source, kind: 'recorded', file: f.name, B: l.targetCreated || '', M: l.targetModified || '', A: l.targetAccessed || '', entry: it ? it.mft.entry : null, seq: it ? it.mft.seq : null, size: l.fileSize });
+}
+
 export function runLnk(u8, f, ctx) {
   const l = parseLnk(u8);
   gradeLnk(l, f, ctx, 'LECmd');
+  lnkTimes(l, l.localPath || l.target, f, ctx, 'LNK target times');
   for (const [t, k] of [[l.targetCreated, 'Target created'], [l.targetModified, 'Target modified'], [l.targetAccessed, 'Target accessed']]) ctx.event({ time: t, tool: 'LECmd', file: f.name, type: `LNK ${k}`, desc: l.target });
   const rows = [['Target', l.target], ['Arguments', l.arguments], ['Working dir', l.workingDir], ['Relative path', l.relativePath], ['Icon', l.iconLocation], ['Description', l.name], ['Target created', l.targetCreated], ['Target modified', l.targetModified], ['Target accessed', l.targetAccessed], ['File size', l.fileSize],
     ['Drive type', l.volume?.driveType || ''], ['Volume serial', l.volume?.serial || ''], ['Volume label', l.volume?.label || ''], ['Network path', l.networkPath], ['ID list path', l.idListPath || ''], ['Env var target', l.envTarget],
@@ -78,6 +87,7 @@ export function runJumpList(u8, f, ctx, kind) {
     const target = /\[URI\]/.test(e.target) && e.destPath ? e.destPath : e.target;
     rows.push([e.lastUsed || e.targetModified || '', target, e.arguments || '', e.accessCount ?? '', e.pinned ? 'Y' : '', e.hostname || e.tracker?.machineId || '', e.volume?.driveType || '', e.tracker?.macAddress || '']);
     gradeLnk({ ...e, target, commandLine: (target + ' ' + (e.arguments || '')).trim() }, f, ctx, 'JLECmd', `${j.appName || j.appId || 'unknown app'}`);
+    lnkTimes(e, e.localPath || target, f, ctx, 'Jump list target times');
     if (e.lastUsed) ctx.event({ time: e.lastUsed, tool: 'JLECmd', file: f.name, type: `Jump list (${j.appName || j.appId})`, desc: target });
     if (j.appId === '1bc392b8e104a00e') ctx.indicators.add('rdp_target', target.replace(/^.*\\/, ''), f.name, 'mstsc jump list');
   }
@@ -164,14 +174,15 @@ export function runMft(u8, f, ctx, shared) {
   const total = m.rows.length;
   for (const [e, c] of extCount) if (c > 300 && c / total > 0.05 && RANSOM_EXT.test('.' + e) && !/^(dll|exe|mui|png|jpg|xml|txt|manifest|cat|inf|pnf|js|htm|html|gif|ttf|nls|cab|mum|dat|log|etl|sys|ini|lnk|css|json|pf|ico|bin|tmp|db|config|resources|winmd|py|pyc|h|cpp|c|cs|java|class|go|rs|md|svg|ps1|psd1|psm1|xsd|xsl|properties|jar|so|a|o|pdb|lib|chm|hlp|ocx|ax|tlb|olb|cpl|scr|msi|msp|zip|7z|rar|wim|esd|vhd|vhdx|iso|mp3|mp4|wav|wma|wmv|avi|mov|doc|docx|xls|xlsx|ppt|pptx|pdf|csv)$/.test(e))
     ctx.finding({ sev: 'critical', category: 'Impact', tool: 'MFTECmd', file: f.name, title: `Mass file extension ".${e}" on ${c} files (${Math.round((c / total) * 100)}% of volume): possible ransomware encryption`, mitre: ['T1486'] });
-  const all = m.rows.map((r) => [r.entry, r.seq, r.inUse ? 'Y' : 'N', r.isDir ? 'Dir' : 'File', r.parentPath, r.name, r.size, r.si ? filetimeToIso(r.si.created) : '', r.si ? filetimeToIso(r.si.modified) : '', r.si ? filetimeToIso(r.si.recordChanged) : '', r.fn ? filetimeToIso(r.fn.created) : '', r.ads.map((a) => a.name).join(';')]);
+  const ft = (v) => (v ? filetimeToIso(v) || '' : '');
+  const all = m.rows.map((r) => [r.entry, r.seq, r.inUse ? 'Y' : 'N', r.isDir ? 'Dir' : 'File', r.parentPath, r.name, r.size, ft(r.si?.created), ft(r.si?.modified), ft(r.si?.accessed), ft(r.si?.recordChanged), ft(r.fn?.created), ft(r.fn?.modified), ft(r.fn?.accessed), ft(r.fn?.recordChanged), r.si && r.si.modified + 10000000n < r.si.created ? 'Y' : '', r.ads.map((a) => a.name).join(';')]);
   return {
     tool: 'MFTECmd', artifact: '$MFT', summary: `${m.rows.length} file records (${m.rows.filter((r) => !r.inUse).length} deleted), ${flagged.length} flagged, ${zone.length} Zone.Identifier streams`,
     tables: [
       T('Flagged files', ['$SI Created', 'Path', 'InUse', 'Size', 'Severity', 'Reasons', 'Entry'], flagged),
       T('Downloaded files (Zone.Identifier ADS)', ['$SI Created', 'Path', 'ZoneId', 'HostUrl', 'ReferrerUrl'], zone),
       T('Timestomping candidates', ['Path', '$SI Created', '$FN Created', 'Reasons'], stomped),
-      T('All MFT entries', ['Entry', 'Seq', 'InUse', 'Type', 'ParentPath', 'FileName', 'Size', 'SI Created', 'SI Modified', 'SI RecordChange', 'FN Created', 'ADS'], all),
+      T('All MFT entries', MFT_ALL_COLS, all, 'MACB: B = Created (born), M = Modified, A = Accessed, C = $MFT record change. Copied = M earlier than B (file copied or extracted with its M kept).'),
     ],
     notes: m.bad ? [`${m.bad} records failed fixup (torn or corrupt).`] : [],
   };

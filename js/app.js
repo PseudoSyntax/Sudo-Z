@@ -1,7 +1,8 @@
 // Sudo-Z UI controller.
 import { CATALOG, NOT_ACCEPTED_HELP, availability } from './catalog.js';
-import { markdown, csv, timelineCsv, findingsCsv, indicatorsCsv, leadsCsv, programsCsv, mitreSummary, indicatorLabel, defang } from './report.js';
-import { Grid, datasets } from './grid.js';
+import { markdown, csv, timelineCsv, findingsCsv, indicatorsCsv, leadsCsv, programsCsv, macbCsv, mitreSummary, indicatorLabel, defang } from './report.js';
+import { Grid, datasets, mftAllTables } from './grid.js';
+import { bodyfile } from './ioc/macb.js';
 import { BUILTIN } from './core/bsearch.js';
 import { PROGRAM_COLUMNS } from './ioc/programs.js';
 
@@ -111,6 +112,8 @@ $('#exports').addEventListener('click', (e) => {
     leads: () => [leadsCsv(S.rep), `sudo-z_leads_${stamp}.csv`, 'text/csv'],
     ioc: () => [indicatorsCsv(S.rep), `sudo-z_ioc_${stamp}.csv`, 'text/csv'],
     timeline: () => [timelineCsv(S.rep), `sudo-z_timeline_${stamp}.csv`, 'text/csv'],
+    macb: () => [macbCsv(S.rep), `sudo-z_macb_${stamp}.csv`, 'text/csv'],
+    body: () => [bodyfile(mftAllTables(S.rep)), `sudo-z_${stamp}.body`, 'text/plain'],
   };
   const [data, name, type] = map[b.dataset.exp]();
   download(data, name, type);
@@ -178,12 +181,14 @@ function sitrepView(v) {
       <div class="box"><div class="ph"><span class="code">L</span> LEADS TO INVESTIGATE <a class="more" href="#" data-go="investigate">ALL ${(r.leads || []).length} &gt;</a></div><div class="body">${(r.leads || []).length ? r.leads.slice(0, 6).map((l, i) => leadRow(l, i, true)).join('') : '<span class="muted">No correlated leads. Check FINDINGS for single-artifact hits.</span>'}</div></div>
       ${execBox(r)}
       ${progBox(r)}
+      ${macbBox(r)}
       <div class="box"><div class="ph"><span class="code">E</span> PRIORITY FINDINGS</div><div class="body">${top.length ? top.map(findingRow).join('') : '<span class="muted">No high or critical findings.</span>'}</div></div>
       <div class="box"><div class="ph"><span class="code">F</span> COVERAGE</div><div class="body">${coverage(r)}</div></div>
     </div>
   </div>`;
   v.querySelectorAll('.kpi').forEach((k) => k.addEventListener('click', () => { S.f.sev = new Set([k.dataset.sev]); switchTab('findings'); }));
   v.querySelectorAll('[data-go]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); switchTab(a.dataset.go); }));
+  v.querySelectorAll('[data-macb]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); openGrid(a.dataset.macb, a.dataset.rule ? { q: '', filters: { 1: '=' + a.dataset.rule } } : { q: '', filters: {} }); }));
   v.querySelectorAll('[data-prog]').forEach((a) => a.addEventListener('click', () => { openGrid('programs', { q: '', filters: { 2: '=' + a.dataset.prog } }); }));
   bindLeads(v);
   v.querySelectorAll('[data-ind]').forEach((k) => k.addEventListener('click', () => { S.ind.type = k.dataset.ind; switchTab('indicators'); }));
@@ -237,6 +242,16 @@ function progBox(r) {
   return `<div class="box"><div class="ph"><span class="code">P</span> PROGRAMS TO REVIEW <a class="more" href="#" data-go="grid">GRID ${(r.programs || []).length} &gt;</a></div><div class="body">
     ${top.length ? `<table class="t prog"><tr><th>RISK</th><th>PROGRAM</th><th>SIGNATURE</th><th>WHERE</th><th>WHY</th></tr>${top.map((p) => `<tr data-prog="${esc(p.name)}" class="sv-${p.level}"><td class="num"><span class="sev ${p.level}">${p.risk}</span></td><td>${esc(p.name)}</td><td class="${p.signState}">${esc(p.signature.slice(0, 40))}</td><td>${esc(p.location)}</td><td class="muted">${esc(p.reasons.slice(0, 90))}</td></tr>`).join('')}</table>` : '<span class="muted">No program scored 25 or more.</span>'}
     <div class="fine">${uns} unsigned or invalid-signature binaries. Signature data comes from Sysmon 6/7, Autoruns, Sigcheck, Amcache and the PE files themselves.</div></div></div>`;
+}
+function macbBox(r) {
+  const m = r.macb; if (!m || (!m.fsFiles && !m.embedded?.length)) return '';
+  const rules = Object.entries(m.counts || {}).sort((a, b) => b[1] - a[1]);
+  const worst = (rule) => (m.anomalies.find((a) => a.rule === rule) || {}).sev || 'info';
+  const has = (id) => datasets(r, PROGRAM_COLUMNS).some((d) => d.id === id);
+  return `<div class="box"><div class="ph"><span class="code">T</span> MACB FILE TIMES ${has('macb-tl') ? '<a class="more" href="#" data-macb="macb-tl">TIMELINE &gt;</a>' : ''}</div><div class="body">
+    ${rules.length ? `<table class="t exec"><tr><th>CHECK</th><th>FILES</th><th>WORST</th></tr>${rules.map(([k, n]) => `<tr><td><a href="#" data-macb="macb-anom" data-rule="${esc(m.rules[k])}">${esc(m.rules[k])}</a></td><td class="num">${n}</td><td><span class="sev ${worst(k)}">${SEV_SHORT[worst(k)]}</span></td></tr>`).join('')}</table>` : '<span class="muted">No MACB anomalies.</span>'}
+    <div class="fine">${m.fsFiles} file(s) from the $MFT${m.volumeBorn ? `, volume formatted ${esc(m.volumeBorn.slice(0, 10))}` : ''}. Times compared from: ${m.sources.map((s) => `${esc(s.source)} (${s.n})`).join(', ') || 'none'}. ${has('macb-emb') ? '<a href="#" data-macb="macb-emb">Content vs file system &gt;</a>' : ''}</div>
+    <div class="fine warn">${esc(m.accessNote)}</div></div></div>`;
 }
 const PROG_CHIPS = [['ALL', {}], ['RISK ≥ 45', { 0: '>=45' }], ['RAN', { 14: '=Yes' }], ['RAN, NO PREFETCH', { 14: '=Yes', 17: '=' }], ['PRESENT, NOT RUN', { 14: '=Present, not proven run' }], ['UNSIGNED', { 3: '/^(unsigned|signature not valid)/' }], ['USER-WRITABLE', { 4: '=User-writable' }], ['PERSISTS', { 10: '/./' }], ['HAS FINDINGS', { 11: '>0' }], ['LOLBINS', { 2: '/^(powershell|pwsh|cmd|rundll32|regsvr32|mshta|wscript|cscript|certutil|bitsadmin|msiexec|wmic|msbuild|installutil)\\.exe$/' }]];
 let GRID = null;

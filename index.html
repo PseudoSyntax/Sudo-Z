@@ -14,7 +14,7 @@
   <div class="bar-meta">
     <span class="tag ok" title="Files are read with the File API and parsed in a Web Worker. No network requests are made with your data.">LOCAL ONLY / NO UPLOAD</span>
     <span class="tag" id="mode">BROWSER MODE</span>
-    <span class="tag" id="ver">v1.8.0</span>
+    <span class="tag" id="ver">v1.9.0</span>
     <span class="clock" id="clock">--:--:-- UTC</span>
   </div>
 </header>
@@ -62,6 +62,7 @@
       <tr><td>Tasks\* PS history scripts</td><td>Sudo-Z extras</td></tr>
       <tr><td>EZ tool / KAPE module CSVs, Autoruns, Sigcheck, Hayabusa</td><td>Timeline Explorer CSV</td></tr>
       <tr><td>.exe .dll .sys</td><td>Hasher + signer check</td></tr>
+      <tr><td>.docx .docm .xlsx .pptx .doc .xls .pdf</td><td>Document metadata + MACB</td></tr>
       <tr><td>E01 VHD(X) raw QCOW2</td><td>Disk image triage</td></tr>
       <tr><td>anything else</td><td>Hasher + bstrings</td></tr>
     </table>
@@ -89,6 +90,8 @@
         <button data-exp="findings">FINDINGS.CSV</button>
         <button data-exp="ioc">IOC.CSV</button>
         <button data-exp="timeline">TIMELINE.CSV</button>
+        <button data-exp="macb">MACB.CSV</button>
+        <button data-exp="body" title="The Sleuth Kit body file from every $MFT: feed it to mactime">BODYFILE</button>
       </div>
     </nav>
     <div class="view" id="view"></div>

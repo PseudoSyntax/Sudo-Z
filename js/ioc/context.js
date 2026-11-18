@@ -18,6 +18,7 @@ export class Context {
     this.runCounts = new Map(); // exe path -> run count (Prefetch)
     this.evid = new Map(); // exe path -> {Prefetch|ShimCache|Amcache|UserAssist|SRUM: [records]}
     this.coverage = { Prefetch: null, ShimCache: null, Amcache: null, UserAssist: null, SRUM: null }; // what the five execution artifacts covered
+    this.ftimes = []; // MACB: file times from every source (file system, archive entries, document metadata, PE headers, shortcuts)
     this.settings = {}; // system settings that change how evidence should be read (EnablePrefetcher ...)
     this._dedupe = new Set();
   }
@@ -110,6 +111,13 @@ export class Context {
   }
   /** An execution artifact file was parsed even if it held no entries (an empty Prefetch folder still says something). */
   sawArtifact(artifact, file) { const c = this.coverage[artifact] || (this.coverage[artifact] = { files: new Set(), entries: 0, first: '', last: '', users: new Set() }); c.files.add(file); }
+
+  /**
+   * Record timestamps for a file from any source (MACB analysis).
+   * o: {path, source, kind: 'fs'|'container'|'embedded'|'recorded', file, B, M, A, C, entry, seq, size, extra:{compiled, printed, author, lastBy, app, flags[]}}
+   * fs = the file system's own times, container = an archive entry, embedded = metadata inside the file, recorded = another artifact's copy of the times (LNK, jump list, Amcache)
+   */
+  fileTimes(o) { if (o && (o.path || o.file) && this.ftimes.length < 250000) this.ftimes.push(o); }
 
   /** Persistence mechanisms are graded one level higher than plain execution. */
   persist(o) {

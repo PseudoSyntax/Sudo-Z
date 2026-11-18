@@ -24,6 +24,7 @@ export const indicatorsCsv = (rep) => csv(['Type', 'Value', 'Count', 'Sources', 
 export const leadsCsv = (rep) => csv(['Severity', 'Kind', 'Category', 'Title', 'Why', 'Next', 'MITRE', 'Entities', 'Evidence'], (rep.leads || []).map((l) => [l.sev, l.kind, l.category || '', l.title, l.why || '', l.next || '', (l.mitre || []).join(' '), (l.entities || []).join(' | '), l.evidence || '']));
 
 const PCOLS = [['risk', 'Risk'], ['level', 'Level'], ['name', 'Program'], ['signature', 'Signature'], ['location', 'Location'], ['path', 'Path'], ['firstSeen', 'FirstSeen'], ['lastSeen', 'LastSeen'], ['runs', 'Runs'], ['sources', 'SeenBy'], ['persistence', 'Persistence'], ['findings', 'Findings'], ['topFinding', 'TopFinding'], ['reasons', 'Why'], ['executed', 'Executed'], ['firstRun', 'FirstRun'], ['lastRun', 'LastRun'], ['Prefetch', 'Prefetch'], ['ShimCache', 'ShimCache'], ['Amcache', 'Amcache'], ['UserAssist', 'UserAssist'], ['SRUM', 'SRUM'], ['sha1', 'SHA1'], ['signer', 'SignerOrPublisher'], ['args', 'CommandLines']];
+export const macbCsv = (rep) => csv(['Severity', 'Rule', 'Path', 'Detail', 'SI_B', 'SI_M', 'SI_A', 'SI_C', 'FN_B', 'Entry', 'Content_B', 'Content_M', 'Source'], (rep.macb?.anomalies || []).map((a) => [a.sev, a.title, a.path, a.detail, a.siB || '', a.siM || '', a.siA || '', a.siC || '', a.fnB || '', a.entry || '', a.embB || '', a.embM || '', a.source || '']));
 export const programsCsv = (rep) => csv(PCOLS.map((c) => c[1]), (rep.programs || []).map((p) => PCOLS.map((c) => p[c[0]] ?? '')));
 
 export function mitreSummary(rep) {
@@ -69,6 +70,18 @@ export function markdown(rep, { defanged = true } = {}) {
     L.push('| Artifact | Status | Entries | Range | Expected file | Proves | Note |', '|---|---|---|---|---|---|---|');
     for (const c of rep.execution.coverage) L.push(`| ${c.artifact} | ${c.state} | ${c.entries} | ${c.first ? c.first.slice(0, 10) + ' to ' + c.last.slice(0, 10) : ''} | ${c.expected.replace(/\\/g, '\\\\')} | ${c.proves} | ${c.note} |`);
     L.push('');
+  }
+  const mb = rep.macb;
+  if (mb && (mb.anomalies?.length || mb.embedded?.length)) {
+    const cell = (v) => d(String(v || '')).replace(/\|/g, '/').replace(/\\/g, '\\\\');
+    L.push('## MACB file times', '', `Modified, Accessed, Changed ($MFT record change) and Born times from ${mb.fsFiles} $MFT file record(s), compared with times stored inside files and copies kept by other artifacts (${mb.sources.map((s) => `${s.source}: ${s.n}`).join(', ')}).`, '', `> ${mb.accessNote}`, '');
+    const real = mb.anomalies.filter((a) => a.sev !== 'info');
+    if (real.length) {
+      L.push('| Severity | Check | Path | Detail |', '|---|---|---|---|');
+      for (const a of real.slice(0, 40)) L.push(`| ${a.sev} | ${cell(a.title)} | ${cell(a.path)} | ${cell(a.detail)} |`);
+      if (real.length > 40) L.push('', `${real.length - 40} more in macb.csv. Full mactime style timeline: the BODYFILE export (feed it to mactime) or GRID > MACB timeline.`);
+      L.push('');
+    }
   }
   const progs = (rep.programs || []).filter((p) => p.risk >= 25);
   if (progs.length) {

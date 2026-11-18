@@ -61,6 +61,8 @@ jobs:
           curl -fsS -H 'X-Sudo-Z: 1' http://localhost:8793/api/jobs | grep -q '^\['
       - name: Execution evidence (Prefetch, ShimCache, Amcache, UserAssist, SRUM)
         run: node test/execution.mjs
+      - name: MACB file times (MFT rules, document / PE / LNK / zip times)
+        run: node test/macb.mjs
       - name: bstrings search (chunked scanner, built-in patterns)
         run: node test/bstrings.mjs
       - name: Volatility code injection checks
