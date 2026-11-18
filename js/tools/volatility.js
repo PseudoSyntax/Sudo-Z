@@ -10,6 +10,7 @@ import { utf8 } from '../core/bytes.js';
 import { expectedParents, isSingleton, BASELINE } from '../ioc/baseline.js';
 import { classifyPipe, normPipe, pipesInText } from '../ioc/pipes.js';
 import { injectionChecks } from './volinject.js';
+import { rootkitPlugin, rootkitFinal } from './volrootkit.js';
 
 const T = (title, columns, rows, note) => ({ title, columns, rows, note });
 
@@ -34,6 +35,14 @@ const SIGS = [
   ['windows.drivermodule', ['Known Exception', 'Driver Name']],
   ['windows.unhooked_system_calls', ['Function', 'Distinct Implementations']],
   ['windows.registry.userassist', ['Focus Count', 'Time Focused']],
+  ['windows.kthread_ssdt', ['ServiceTable', 'Table owner']],
+  ['windows.ssdt', ['Index', 'Address', 'Module', 'Symbol']],
+  ['windows.callbacks', ['Type', 'Callback', 'Module', 'Symbol', 'Detail']],
+  ['windows.driverirp', ['Driver Name', 'IRP', 'Address']],
+  ['windows.timers', ['DueTime', 'Routine', 'Signaled']],
+  ['windows.unloadedmodules', ['StartAddress', 'EndAddress', 'Time', 'Name']],
+  ['windows.driverscan', ['Service Key', 'Driver Name', 'Start']],
+  ['windows.modules', ['Base', 'Size', 'Name', 'Path', 'File output']],
   ['windows.info', ['Variable', 'Value']],
   ['windows.filescan', ['Offset', 'Name']],
 ];
@@ -131,7 +140,11 @@ export function runVol(u8, f, ctx, shared) {
       break;
     }
     case 'psxview': {
-      for (const r of rows) if (r.psscan && !r.pslist && !r['Exit Time']) note('high', `Process hidden from the active process list: ${r.Name} (PID ${r.PID})`, `pslist=${r.pslist} psscan=${r.psscan} thrdscan=${r.thrdscan} csrss=${r.csrss}`, '', ['T1014', 'T1564'], 'Defense Evasion');
+      for (const r of rows) {
+        if (r.pslist || r['Exit Time'] || !(r.psscan || r.thrdscan || r.csrss)) continue;
+        const views = ['psscan', 'thrdscan', 'csrss'].filter((c) => r[c]);
+        note(views.length >= 2 ? 'critical' : 'high', `Process unlinked from the active process list (DKOM): ${r.Name} (PID ${r.PID})`, `Not in the ActiveProcessLinks list that Task Manager and most tools walk, but still found by ${views.join(', ')}. Rootkits hide processes by unlinking their EPROCESS (direct kernel object manipulation).`, `pslist=${r.pslist} psscan=${r.psscan} thrdscan=${r.thrdscan} csrss=${r.csrss}`, ['T1014', 'T1564'], 'Defense Evasion');
+      }
       tables.push(T('Cross-view process listing', ['Name', 'PID', 'pslist', 'psscan', 'thrdscan', 'csrss', 'ExitTime'], rows.map((r) => [r.Name, r.PID, r.pslist, r.psscan, r.thrdscan, r.csrss, r['Exit Time']])));
       break;
     }
@@ -223,6 +236,7 @@ export function runVol(u8, f, ctx, shared) {
     }
     case 'registry.userassist': for (const r of rows) if (r.Name && r['Last Updated']) { ctx.exec_({ path: String(r.Name), time: r['Last Updated'], tool: 'Volatility 3', file: f.name, source: 'UserAssist (memory)' }); } tables.push(T('UserAssist (memory)', cols, rows.map((r) => cols.map((c) => r[c])))); break;
     default: {
+      if (rootkitPlugin(key, rows, note, tables, cols)) break;
       for (const r of rows.slice(0, 50000)) for (const v of Object.values(r)) if (typeof v === 'string' && v.length > 6) ctx.text(v, f.name);
       tables.push(T(`${plugin} output`, cols, rows.map((r) => cols.map((c) => r[c]))));
     }
@@ -266,10 +280,11 @@ export function finalizeVol(shared, ctx) {
     const live = new Set(v.pslist.map((r) => `${r.PID}|${String(r.ImageFileName).toLowerCase()}`));
     for (const r of v.psscan) {
       if (r.ExitTime || live.has(`${r.PID}|${String(r.ImageFileName).toLowerCase()}`)) continue;
-      ctx.finding({ sev: 'high', category: 'Defense Evasion', tool: 'Volatility 3', file: shared.volFile.psscan, time: r.CreateTime, title: `Hidden process: ${r.ImageFileName} (PID ${r.PID}) found by psscan but not in pslist`, detail: 'An active EPROCESS unlinked from the process list is a DKOM rootkit indicator (or a process that exited without an exit time).', mitre: ['T1014', 'T1564'] });
+      ctx.finding({ sev: 'high', category: 'Defense Evasion', tool: 'Volatility 3', file: shared.volFile.psscan, time: r.CreateTime, title: `Hidden process (DKOM unlink): ${r.ImageFileName} (PID ${r.PID}) found by psscan but not in pslist`, detail: 'An active EPROCESS unlinked from the process list is a DKOM rootkit indicator (or a process that exited without an exit time).', mitre: ['T1014', 'T1564'] });
     }
   }
   namedPipes(v, shared, ctx);
+  try { rootkitFinal(v, shared, ctx); } catch (e) { ctx.finding({ sev: 'info', category: 'Memory', tool: 'Volatility 3', file: '', title: 'Memory: rootkit cross-checks failed: ' + e.message }); }
   try { injectionChecks(v, shared, ctx); } catch (e) { ctx.finding({ sev: 'info', category: 'Memory', tool: 'Volatility 3', file: '', title: 'Memory: injection checks failed: ' + e.message }); }
   if (v.cmdline && (v.pslist || v.pstree)) {
     const names = new Map((v.pstree || v.pslist).map((r) => [r.PID, String(r.ImageFileName || '').toLowerCase()]));

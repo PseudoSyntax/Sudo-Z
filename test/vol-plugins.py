@@ -5,7 +5,7 @@ import ast, re, subprocess, sys
 vol = sys.argv[1]
 srv = sys.argv[2] if len(sys.argv) > 2 else 'tools/server.py'
 groups = ast.literal_eval(re.search(r'VOL_PLUGINS = (\[.*?\n\])', open(srv).read(), re.S).group(1))
-out = subprocess.run([vol, '-h'], capture_output=True, text=True).stdout
+out = subprocess.run([vol, '-p', 'tools/volplugins', '-h'], capture_output=True, text=True).stdout
 names = set(re.findall(r'^\s+((?:windows|linux|mac)\.[A-Za-z0-9_.]+)', out, re.M))
 ver = re.search(r'Framework ([\d.]+)', out)
 print(f'Volatility {ver.group(1) if ver else "?"}: {len(names)} plugins')

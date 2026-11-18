@@ -1,0 +1,13 @@
+[
+{
+"PID": 1234,
+"Process": "svchost.exe",
+"TID": 4410,
+"ServiceTable": 18446738026423910400,
+"Table owner": "UNKNOWN",
+"Expected": "0xfffff80002a7e840, 0xfffff80002a7e880",
+"Entries": 401,
+"Hooked entries": 3,
+"Note": "differs from KeServiceDescriptorTable and ...Shadow; thread is missing from its process thread list (found by pool scan)"
+}
+]

@@ -37,7 +37,12 @@ VOL_PLUGINS = [
     # injection and EDR evasion
     ['windows.malware.pebmasquerade'], ['windows.malware.skeleton_key_check', 'windows.skeleton_key_check'], ['windows.malware.direct_system_calls', 'windows.direct_system_calls'],
     ['windows.malware.indirect_system_calls', 'windows.indirect_system_calls'], ['windows.malware.unhooked_system_calls', 'windows.unhooked_system_calls'], ['windows.etwpatch'], ['windows.suspended_threads'],
+    # kernel rootkits: syscall tables (global and per-thread), DKOM cross-views, callbacks, IRP and timer hooks
+    ['windows.ssdt'], ['windows.kthread_ssdt'], ['windows.modules'], ['windows.modscan'], ['windows.driverscan'], ['windows.unloadedmodules'],
+    ['windows.callbacks'], ['windows.driverirp'], ['windows.timers'], ['windows.orphan_kernel_threads'],
 ]
+# Sudo-Z's own Volatility plugins (windows.kthread_ssdt)
+VOL_EXTRA = APP / 'tools' / 'volplugins'
 
 def version():
     try: return (HOME / 'version.txt').read_text().strip()[:12]
@@ -167,7 +172,8 @@ def run_vol(job, image, plugins):
             jlog(job, f'vol {plugin}')
             try:
                 with open(out, 'w', encoding='utf-8') as fh:
-                    p = subprocess.run(base + ['-q', '-r', 'json', '-f', image, plugin], stdout=fh, stderr=subprocess.PIPE, text=True, timeout=7200)
+                    extra = ['-p', str(VOL_EXTRA)] if VOL_EXTRA.is_dir() else []
+                    p = subprocess.run(base + extra + ['-q', '-r', 'json', '-f', image, plugin], stdout=fh, stderr=subprocess.PIPE, text=True, timeout=7200)
                 err = (p.stderr or '').strip()
                 if p.returncode == 0 and out.stat().st_size > 2:
                     job['results'].append({'plugin': plugin, 'file': out.name, 'ok': True}); ok = True; break

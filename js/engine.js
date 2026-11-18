@@ -29,7 +29,7 @@ import { runPe } from './tools/binaries.js';
 import { buildPrograms, gradeSignatures } from './ioc/programs.js';
 import { detectEzCsv, runEzCsv } from './tools/ezcsv.js';
 
-export const VERSION = '1.5.0';
+export const VERSION = '1.6.0';
 const MAX_ZIP_DEPTH = 3;
 const MAX_FILE = 1.5 * 1024 ** 3;
 

@@ -1,0 +1,11 @@
+[
+{
+"Offset": 1,
+"DueTime": "0x1",
+"Period(ms)": 1000,
+"Signaled": "Yes",
+"Routine": 18446735827391426560,
+"Module": "UNKNOWN",
+"Symbol": null
+}
+]

@@ -1,0 +1,18 @@
+[
+{
+"Offset": 1,
+"Base": 18446735277660569600,
+"Size": 6160384,
+"Name": "ntoskrnl.exe",
+"Path": "\\SystemRoot\\system32\\ntoskrnl.exe",
+"File output": "Disabled"
+},
+{
+"Offset": 2,
+"Base": 18446735827391414272,
+"Size": 65536,
+"Name": "rk_drv.sys",
+"Path": "\\??\\C:\\Users\\Public\\rk_drv.sys",
+"File output": "Disabled"
+}
+]
