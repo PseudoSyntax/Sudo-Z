@@ -71,12 +71,27 @@ def ez_tools():
                 found[t] = str(p); break
             if t not in found and not IS_WIN:
                 for p in root.rglob(t + '.exe'):
-                    dll = p.with_suffix('.dll')
-                    if dll.exists(): found[t] = str(dll); break
+                    found[t] = str(p.with_suffix('.dll')) if p.with_suffix('.dll').exists() else str(p)  # .exe only = Windows-only build
+                    break
     return found
 
+def dotnet_path():
+    p = HOME / 'dotnet' / ('dotnet.exe' if IS_WIN else 'dotnet')
+    return str(p) if p.exists() else shutil.which('dotnet')
+
+def tool_env():
+    env = dict(os.environ)
+    private = HOME / 'dotnet'
+    if private.exists():
+        env['DOTNET_ROOT'] = str(private)  # lets framework-dependent .exe builds find the private runtime
+        env['PATH'] = str(private) + os.pathsep + env.get('PATH', '')
+    return env
+
 def ez_cmd(path):
-    return [path] if path.lower().endswith('.exe') else (['dotnet', path] if shutil.which('dotnet') else None)
+    if path.lower().endswith('.exe'):
+        return [path] if IS_WIN else None
+    d = dotnet_path()
+    return [d, path] if d else None
 
 CAPS = {}
 def detect_caps():
@@ -85,7 +100,7 @@ def detect_caps():
     CAPS.update({
         'local': True, 'version': version(), 'os': platform.system(), 'python': platform.python_version(),
         'vol3': {'available': bool(vc), 'version': vv},
-        'ez': {'tools': sorted(ez_tools().keys()), 'dotnet': bool(shutil.which('dotnet')) or IS_WIN},
+        'ez': {'tools': sorted(ez_tools().keys()), 'dotnet': bool(dotnet_path())},
         'runs': str(RUNS),
     })
     CAPS['_volcmd'] = vc
@@ -168,10 +183,10 @@ def run_ez(job, root):
         out.mkdir(exist_ok=True)
         cmd = ez_cmd(tools[tool])
         if not cmd:
-            job['results'].append({'tool': tool, 'ok': False, 'error': '.NET runtime (dotnet) not found'}); job['done'] += 1; continue
+            job['results'].append({'tool': tool, 'ok': False, 'error': 'Windows-only build on this OS' if tools[tool].lower().endswith('.exe') else '.NET runtime not found (sudo-z setup dotnet)'}); job['done'] += 1; continue
         jlog(job, f'{tool} {" ".join(args)}')
         try:
-            p = subprocess.run(cmd + args + ['--csv', str(out)], capture_output=True, text=True, timeout=7200)
+            p = subprocess.run(cmd + args + ['--csv', str(out)], capture_output=True, text=True, timeout=7200, env=tool_env(), stdin=subprocess.DEVNULL)
             files = [str(x.relative_to(job['dir'])) for x in out.rglob('*') if x.is_file()]
             job['results'].append({'tool': tool, 'label': label, 'ok': p.returncode == 0, 'files': files, 'error': (p.stderr or '')[-600:] if p.returncode else ''})
         except Exception as e:
