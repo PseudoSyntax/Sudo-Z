@@ -278,3 +278,16 @@ table.rel { margin-top: 6px; font-size: 11px; }
 .g-detail .kv { grid-template-columns: 110px 1fr; word-break: break-all; } .g-detail .kv div:nth-child(odd) { color: var(--dim); }
 table.prog tr { cursor: pointer; } table.prog tr:hover td { background: var(--bg2); }
 table.prog td.unsigned, table.prog td.invalid { color: var(--high); } table.prog td.signed { color: var(--green); }
+
+/* STRINGS (bstrings) */
+.strings-form .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+.strings-form input[type=text], .strings-form input[type=number], .strings-form select, .strings-form textarea { background: #050605; color: var(--fg); border: 1px solid var(--line2); padding: 4px 6px; font: inherit; }
+.strings-form #squery { flex: 1; min-width: 260px; } .strings-form textarea { width: 100%; box-sizing: border-box; margin-bottom: 6px; }
+.strings-form input[type=number] { width: 80px; } .strings-form label { color: var(--dim); font-size: 11px; }
+.strings-form .chk input { accent-color: var(--amber); vertical-align: middle; }
+.strings-form .pats { display: flex; flex-wrap: wrap; gap: 6px 22px; margin: 4px 0 8px; }
+.strings-form .pg b { display: block; color: var(--amber); font-size: 10px; letter-spacing: .1em; font-weight: 400; margin-bottom: 2px; }
+.strings-form .pg label { display: inline-block; margin-right: 10px; color: var(--fg); cursor: pointer; }
+.strings-form .pg input { accent-color: var(--amber); }
+.strings-form .sstat { color: var(--amber); margin-top: 6px; min-height: 1em; }
+.strings-form [hidden] { display: none !important; }

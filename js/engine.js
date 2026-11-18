@@ -29,7 +29,7 @@ import { runPe } from './tools/binaries.js';
 import { buildPrograms, gradeSignatures } from './ioc/programs.js';
 import { detectEzCsv, runEzCsv } from './tools/ezcsv.js';
 
-export const VERSION = '1.6.0';
+export const VERSION = '1.7.0';
 const MAX_ZIP_DEPTH = 3;
 const MAX_FILE = 1.5 * 1024 ** 3;
 
@@ -153,7 +153,8 @@ async function expand(inputs, log) {
   return { files: out, rejected };
 }
 
-export async function analyze(inputs, { onProgress = () => {}, log = () => {} } = {}) {
+export async function analyze(inputs, opts = {}) {
+  const { onProgress = () => {}, log = () => {} } = opts;
   const t0 = Date.now();
   const ctx = new Context();
   const shared = {};
@@ -163,6 +164,8 @@ export async function analyze(inputs, { onProgress = () => {}, log = () => {} } 
   const prog = (p, l) => onProgress(pstart + p * (1 - pstart), l);
   onProgress(pstart, 'Expanding archives');
   const { files, rejected } = await expand(img.plain, log);
+  // keep the bytes around for the STRINGS search (bstrings) after the report is built
+  try { opts.onFiles?.({ files: files.map((f) => ({ name: f.name, data: f.data })), raw: inputs.filter((i) => i.src).map((i) => ({ name: i.name, src: i.src })) }); } catch { }
   const results = [...img.recs];
   // routing; MFT first so $J can resolve paths
   const routed = files.map((f) => ({ ...f, det: f.data.length > MAX_FILE ? { reject: true, reason: 'File larger than 1.5 GB browser limit.' } : f.velo ? { id: 'velo', tool: 'Velociraptor', label: 'Velociraptor artifact results' } : f.veloMeta ? { id: 'velo-meta', tool: 'Velociraptor', label: 'Velociraptor collection metadata' } : detect(f.name, f.data) }));
