@@ -1,0 +1,1 @@
+[{"PID": 700, "Process": "lsass.exe", "Address": "0x1d0010", "Function": "NtAllocateVirtualMemory"}]

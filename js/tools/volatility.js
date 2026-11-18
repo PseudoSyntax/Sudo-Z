@@ -9,6 +9,7 @@ import { KEYWORD_RULES } from '../core/strings.js';
 import { utf8 } from '../core/bytes.js';
 import { expectedParents, isSingleton, BASELINE } from '../ioc/baseline.js';
 import { classifyPipe, normPipe, pipesInText } from '../ioc/pipes.js';
+import { injectionChecks } from './volinject.js';
 
 const T = (title, columns, rows, note) => ({ title, columns, rows, note });
 
@@ -135,12 +136,9 @@ export function runVol(u8, f, ctx, shared) {
       break;
     }
     case 'ldrmodules': {
-      for (const r of rows) {
-        const mp = String(r.MappedPath || '');
-        if (r.InLoad === false && r.InInit === false && r.InMem === false && mp && /\.dll$/i.test(mp)) note('high', `Unlinked DLL in ${r.Process} (PID ${r.Pid}): ${baseName(mp)}`, 'Module missing from all three loader lists (hidden / reflectively loaded).', mp, ['T1055.001', 'T1620'], 'Defense Evasion');
-        else if (mp && classifyPath(mp).sev && /\.dll$/i.test(mp)) note('medium', `DLL loaded from suspicious path in ${r.Process}: ${baseName(mp)}`, classifyPath(mp).reasons.join('; '), mp, ['T1574.002'], 'Defense Evasion');
-      }
-      tables.push(T('Loader modules', ['Pid', 'Process', 'Base', 'InLoad', 'InInit', 'InMem', 'MappedPath'], rows.map((r) => [r.Pid, r.Process, r.Base, r.InLoad, r.InInit, r.InMem, r.MappedPath])));
+      // graded in the final pass (volinject.js) together with malfind, pstree and dlllist
+      for (const r of rows) { const mp = String(r.MappedPath || ''); if (mp && classifyPath(mp).sev && /\.dll$/i.test(mp)) note('medium', `DLL loaded from suspicious path in ${r.Process}: ${baseName(mp)}`, classifyPath(mp).reasons.join('; '), mp, ['T1574.002'], 'Defense Evasion'); }
+      tables.push(T('Loader modules', ['Pid', 'Process', 'Base', 'InLoad', 'InInit', 'InMem', 'MappedPath'], rows.map((r) => [r.Pid, r.Process, r.Base, r.InLoad, r.InInit, r.InMem, r.MappedPath == null || r.MappedPath === '' ? 'N/A' : r.MappedPath])));
       break;
     }
     case 'hollowprocesses': for (const r of rows) note('critical', `Process hollowing in ${r.Process} (PID ${r.PID})`, r.Notes, '', ['T1055.012'], 'Defense Evasion'); tables.push(T('Hollow processes', cols, rows.map((r) => cols.map((c) => r[c])))); break;
@@ -191,6 +189,32 @@ export function runVol(u8, f, ctx, shared) {
     }
     case 'drivermodule': for (const r of rows) if (r['Known Exception'] === false) note('high', `Driver object without a module (possible rootkit): ${r['Driver Name']}`, r['Service Key'] || '', '', ['T1014'], 'Defense Evasion'); tables.push(T('Driver module check', cols, rows.map((r) => cols.map((c) => r[c])))); break;
     case 'unhooked_system_calls': for (const r of rows) if ((r['Distinct Implementations'] || 0) > 1) note('high', `System call ${r.Function} has ${r['Distinct Implementations']} different implementations (hooking / EDR unhooking)`, '', '', ['T1562.001'], 'Defense Evasion'); tables.push(T('System call implementations', cols, rows.map((r) => cols.map((c) => r[c])))); break;
+    case 'pebmasquerade': case 'skeleton_key_check': case 'direct_system_calls': case 'indirect_system_calls': case 'etwpatch': case 'suspended_threads': {
+      // these plugins only print what they consider suspicious; every row is a lead
+      const pidOf = (r) => r.PID ?? r.Pid ?? r.pid ?? '';
+      const procOf = (r) => r.Process || r.ImageFileName || r.Name || r.Owner || '';
+      const RULES = {
+        pebmasquerade: ['high', 'PEB masquerading', 'The process name/path in the PEB was rewritten to look like another program.', ['T1036.005', 'T1055']],
+        skeleton_key_check: ['critical', 'Skeleton Key in LSASS', 'LSASS authentication routines are patched so a master password works for any account.', ['T1556.001', 'T1003.001']],
+        direct_system_calls: ['high', 'direct system calls', 'Code issues syscalls itself instead of going through ntdll, a technique injectors and loaders use to bypass EDR hooks.', ['T1106', 'T1562.001']],
+        indirect_system_calls: ['high', 'indirect system calls', 'Code jumps into the middle of ntdll syscall stubs to hide where syscalls come from (EDR evasion by injectors and loaders).', ['T1106', 'T1562.001']],
+        etwpatch: ['high', 'ETW patched in memory', 'Event Tracing for Windows functions are patched so security telemetry from this process is silenced.', ['T1562.006']],
+        suspended_threads: ['low', 'suspended thread', 'Suspended threads are common in UWP apps, but injected code is often staged in a suspended thread first.', ['T1055']],
+      };
+      const [sev, what, why, mitre] = RULES[key];
+      const hits = key === 'skeleton_key_check' ? rows.filter((r) => Object.entries(r).some(([k, val]) => /found|skeleton|patched/i.test(k) && (val === true || /^true$/i.test(String(val))))) : rows;
+      const per = new Map(); for (const r of hits) { const k = `${pidOf(r)}|${procOf(r)}`; if (!per.has(k)) per.set(k, []); per.get(k).push(r); }
+      shared.volMarks = shared.volMarks || [];
+      for (const [k, list] of per) {
+        const [pid, proc] = k.split('|');
+        const isLsass = /^lsass\.exe$/i.test(proc);
+        const s2 = key === 'suspended_threads' && /^(lsass|csrss|winlogon|services|svchost|explorer)\.exe$/i.test(proc) ? 'medium' : sev;
+        note(s2, `${what}${proc ? ` in ${proc}` : ''}${pid !== '' ? ` (PID ${pid})` : ''}${list.length > 1 ? ` x${list.length}` : ''}`, why + (isLsass && key !== 'skeleton_key_check' ? ' Inside LSASS this points at credential theft tooling.' : ''), list.slice(0, 10).map((r) => Object.entries(r).filter(([c]) => !c.startsWith('_')).map(([c, val]) => `${c}=${val}`).join(' ')).join('\n').slice(0, 1500), mitre, 'Defense Evasion');
+        if (pid !== '') shared.volMarks.push([pid, what]);
+      }
+      tables.push(T(`${plugin} results`, cols, rows.map((r) => cols.map((c) => r[c]))));
+      break;
+    }
     case 'info': {
       const info = Object.fromEntries(rows.map((r) => [r.Variable, r.Value]));
       if (info.SystemTime) ctx.event({ time: String(info.SystemTime).replace(' ', 'T').replace(/(\+00:00)?$/, '').replace(/Z?$/, 'Z'), tool: 'Volatility 3', file: f.name, type: 'Memory image captured (SystemTime)', desc: `${info.NtSystemRoot || ''} ${info.NtBuildLab || ''}` });
@@ -246,6 +270,7 @@ export function finalizeVol(shared, ctx) {
     }
   }
   namedPipes(v, shared, ctx);
+  try { injectionChecks(v, shared, ctx); } catch (e) { ctx.finding({ sev: 'info', category: 'Memory', tool: 'Volatility 3', file: '', title: 'Memory: injection checks failed: ' + e.message }); }
   if (v.cmdline && (v.pslist || v.pstree)) {
     const names = new Map((v.pstree || v.pslist).map((r) => [r.PID, String(r.ImageFileName || '').toLowerCase()]));
     for (const r of v.cmdline) {

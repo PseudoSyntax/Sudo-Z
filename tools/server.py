@@ -34,6 +34,9 @@ VOL_PLUGINS = [
     ['windows.malware.processghosting', 'windows.processghosting'], ['windows.malware.suspicious_threads', 'windows.suspicious_threads'],
     ['windows.svcscan'], ['windows.dlllist'], ['windows.cmdscan'], ['windows.consoles'], ['windows.malware.drivermodule', 'windows.drivermodule'],
     ['windows.registry.userassist'], ['windows.handles'], ['windows.filescan'],
+    # injection and EDR evasion
+    ['windows.malware.pebmasquerade'], ['windows.malware.skeleton_key_check', 'windows.skeleton_key_check'], ['windows.malware.direct_system_calls', 'windows.direct_system_calls'],
+    ['windows.malware.indirect_system_calls', 'windows.indirect_system_calls'], ['windows.malware.unhooked_system_calls', 'windows.unhooked_system_calls'], ['windows.etwpatch'], ['windows.suspended_threads'],
 ]
 
 def version():
