@@ -83,6 +83,9 @@ function systemPlugins(root, f, ctx, tables) {
   const sd = cs.path('Control\\Windows')?.value('ShutdownTime');
   if (sd && sd.raw.length >= 8) info.push(['Last shutdown', filetimeToIso(new Reader(sd.raw).u64(0))]);
   info.push(['Current ControlSet', cs.name]);
+  const pfp = cs.path('Control\\Session Manager\\Memory Management\\PrefetchParameters');
+  const epf = pfp?.get('EnablePrefetcher');
+  if (epf != null) { info.push(['EnablePrefetcher', `${epf} (${['disabled', 'applications only', 'boot only', 'applications and boot'][epf] || '?'})`]); ctx.settings.enablePrefetcher = { value: epf, time: pfp.lastWritten, file: f.name }; }
 
   // RDP / credential settings
   const ts = cs.path('Control\\Terminal Server');
@@ -145,7 +148,9 @@ function systemPlugins(root, f, ctx, tables) {
       const sc = shimcache(acc.raw);
       const rows = sc.rows.map((e, i) => [i, e.modified, e.path, e.executed === null ? 'n/a' : e.executed ? 'Yes' : 'No']);
       tables.push(T(`AppCompatCache / ShimCache (${sc.format})`, ['Position', 'LastModified', 'Path', 'Executed'], rows, 'Position 0 is the most recent entry. On Win10+ presence means the file was seen by the shim engine, not proof of execution.'));
-      for (const e of sc.rows) {
+      ctx.sawArtifact('ShimCache', f.name);
+      for (const [pos, e] of sc.rows.entries()) {
+        ctx.evidence({ artifact: 'ShimCache', path: e.path, time: e.modified, executed: e.executed, position: pos, file: f.name });
         ctx.event({ time: e.modified, tool: 'AppCompatCacheParser', file: f.name, type: 'ShimCache (file mtime)', desc: e.path });
         const pc = classifyPath(e.path);
         if (pc.sev) ctx.exec_({ path: e.path, time: e.modified, tool: 'AppCompatCacheParser', file: f.name, source: 'ShimCache' });
@@ -388,6 +393,7 @@ function ntuserPlugins(root, f, ctx, tables) {
 
   // UserAssist
   const ua = root.path('Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\UserAssist');
+  if (ua) ctx.sawArtifact('UserAssist', f.name);
   const uaRows = [];
   if (ua) for (const g of ua.subkeys()) {
     const cnt = g.sub('Count'); if (!cnt) continue;
@@ -398,6 +404,7 @@ function ntuserPlugins(root, f, ctx, tables) {
       else if (b.length >= 16) { const r = new Reader(b); runs = Math.max(0, r.u32(4) - 5); last = r.filetime(8); }
       if (/^UEME_/.test(name)) continue;
       uaRows.push([last, name, runs, focus != null ? Math.round(focus / 1000) + 's' : '', g.name]);
+      if (/\\|\.exe$/i.test(name)) ctx.evidence({ artifact: 'UserAssist', path: name, time: last, runCount: runs, focus: focus != null ? Math.round(focus / 1000) : null, user: hiveUser(f.name), file: f.name });
       if (last) {
         ctx.event({ time: last, tool: 'RECmd (UserAssist)', file: f.name, type: 'Program execution (UserAssist GUI)', desc: `${name} (runs ${runs})` });
         ctx.exec_({ path: name, time: last, tool: 'RECmd', file: f.name, source: 'UserAssist' });
@@ -489,6 +496,7 @@ function amcachePlugins(root, f, ctx, tables) {
     const sha1 = String(k.get('FileId') || '').replace(/^0000/, '');
     rows.push([k.lastWritten, path, sha1, k.get('Publisher') || '', k.get('ProductName') || '', k.get('Version') || '', k.get('LinkDate') || '', k.get('IsOsComponent') ? 'Y' : '', k.get('Size') ?? '']);
   }
+  ctx.sawArtifact('Amcache', f.name);
   const old = R.sub('File');
   if (old) for (const vol of old.subkeys()) for (const k of vol.subkeys()) {
     const path = k.get('15') || ''; if (!path) continue;
@@ -497,6 +505,7 @@ function amcachePlugins(root, f, ctx, tables) {
   tables.push(T('Amcache file entries', ['KeyLastWrite (≈first run/install)', 'Path', 'SHA1', 'Publisher', 'Product', 'Version', 'LinkDate', 'OSComponent', 'Size'], rows, 'SHA1 values are the most useful pivot for threat intel lookups.'));
   for (const r of rows) {
     ctx.event({ time: r[0], tool: 'AmcacheParser', file: f.name, type: 'Amcache entry (program present/executed)', desc: `${r[1]} SHA1 ${r[2]}` });
+    ctx.evidence({ artifact: 'Amcache', path: r[1], time: r[0], sha1: r[2] || null, publisher: r[3] || '', file: f.name });
     const res = ctx.exec_({ path: r[1], time: r[0], tool: 'AmcacheParser', file: f.name, source: 'Amcache', sha1: r[2] || null });
     if (/\.(exe|dll|sys|scr|com)$/i.test(r[1])) ctx.sign({ path: r[1], sha1: r[2], publisher: r[3], osComponent: !!r[7], kind: /\.sys$/i.test(r[1]) ? 'driver' : /\.dll$/i.test(r[1]) ? 'dll' : 'exe', source: 'Amcache', file: f.name, time: r[0] });
     if (res?.sev) { /* sha1 indicator added by exec_ */ }
@@ -540,6 +549,9 @@ function samPlugins(root, f, ctx, tables) {
   }
   tables.push(T('Local user accounts (SAM)', ['Created (Names key)', 'User', 'RID', 'LastLogon', 'PasswordSet', 'LastFailed', 'Logons', 'FailedCount', 'Disabled'], rows));
 }
+
+/** User name from a hive's path: .../Users/<name>/NTUSER.DAT */
+export const hiveUser = (p) => (String(p).match(/(?:users|documents and settings)[\\/]([^\\/]+)[\\/][^\\/]*$/i) || String(p).match(/(?:users|documents and settings)[\\/]([^\\/]+)[\\/]/i) || [])[1] || '';
 
 export function runRegistry(u8, f, ctx) {
   const hive = new Hive(u8);

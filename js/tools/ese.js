@@ -33,6 +33,7 @@ function srum(db, f, ctx, tables) {
   }
   const app = (id) => ids.get(id)?.value || `#${id}`;
   // network usage per app
+  ctx.sawArtifact('SRUM', f.name);
   const net = db.table(SRUM_TABLES.network) || [];
   const per = new Map();
   for (const r of net) {
@@ -52,6 +53,7 @@ function srum(db, f, ctx, tables) {
     else if (sent > 100 * (1 << 20) && !BROWSER_OR_SYSTEM.test(path) && sent > recv * 2) { sev = sev || 'medium'; why.push(`upload-heavy traffic: sent ${fmtBytes(sent)}, received ${fmtBytes(recv)}`); }
     if (sev) ctx.finding({ sev, category: 'Exfiltration', tool: 'SrumECmd', file: f.name, time: first, title: `SRUM: ${baseName(path) || path} network activity (${fmtBytes(sent)} sent)`, detail: why.join('; ') + ` | ${first} to ${last} | ${users}`, evidence: path, mitre: ['T1041', 'T1567'] });
     if (/^[a-z]:\\|\\device\\harddiskvolume/i.test(path)) ctx.exec_({ path: path.replace(/^\\device\\harddiskvolume\d+/i, 'C:'), time: first, tool: 'SrumECmd', file: f.name, source: 'SRUM' });
+    if (/^[a-z]:\\|\\device\\harddiskvolume/i.test(path)) ctx.evidence({ artifact: 'SRUM', path: path.replace(/^\\device\\harddiskvolume\d+/i, 'C:'), time: first, first, last, sent, recv, user: users, file: f.name });
   }
   for (const r of net) if ((r.BytesSent || 0) > 50 * (1 << 20)) ctx.event({ time: r.TimeStamp, tool: 'SrumECmd', file: f.name, type: 'SRUM large upload hour', desc: `${app(r.AppId)} sent ${fmtBytes(r.BytesSent)}` });
   // app resource usage

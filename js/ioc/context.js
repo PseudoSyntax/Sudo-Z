@@ -16,6 +16,9 @@ export class Context {
     this.persistAll = []; // every persistence entry, flagged or not (attack chains use it)
     this.signs = new Map(); // path or sha1 -> what any artifact said about its code signature
     this.runCounts = new Map(); // exe path -> run count (Prefetch)
+    this.evid = new Map(); // exe path -> {Prefetch|ShimCache|Amcache|UserAssist|SRUM: [records]}
+    this.coverage = { Prefetch: null, ShimCache: null, Amcache: null, UserAssist: null, SRUM: null }; // what the five execution artifacts covered
+    this.settings = {}; // system settings that change how evidence should be read (EnablePrefetcher ...)
     this._dedupe = new Set();
   }
 
@@ -88,6 +91,25 @@ export class Context {
     if (o.time && (!e.time || o.time < e.time)) e.time = o.time;
     this.signs.set(key, e);
   }
+
+  /**
+   * Record one entry from the five core execution artifacts, every entry, flagged or not.
+   * o: {artifact: 'Prefetch'|'ShimCache'|'Amcache'|'UserAssist'|'SRUM', path, time, file, user, runCount, lastRuns, executed, sha1, sent, recv, first, last, focus}
+   */
+  evidence(o) {
+    if (!o.path) return;
+    const key = normKey(String(o.path).replace(/^\\VOLUME\{[^}]+\}/i, 'C:'));
+    if (!this.evid.has(key)) this.evid.set(key, { path: o.path });
+    const e = this.evid.get(key);
+    (e[o.artifact] ||= []).push(o);
+    if (String(o.path).length > String(e.path).length) e.path = o.path;
+    const c = this.coverage[o.artifact] || (this.coverage[o.artifact] = { files: new Set(), entries: 0, first: '', last: '', users: new Set() });
+    c.files.add(o.file); c.entries++;
+    for (const t of [o.time, o.first, o.last, ...(o.lastRuns || [])]) if (t && /^\d{4}-/.test(t) && t > '1990') { if (!c.first || t < c.first) c.first = t; if (!c.last || t > c.last) c.last = t; }
+    if (o.user) c.users.add(o.user);
+  }
+  /** An execution artifact file was parsed even if it held no entries (an empty Prefetch folder still says something). */
+  sawArtifact(artifact, file) { const c = this.coverage[artifact] || (this.coverage[artifact] = { files: new Set(), entries: 0, first: '', last: '', users: new Set() }); c.files.add(file); }
 
   /** Persistence mechanisms are graded one level higher than plain execution. */
   persist(o) {

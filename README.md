@@ -211,6 +211,29 @@ If you already ran the EZ tools (by hand, through KAPE's `!EZParser` module, or 
 
 On the home install, finished EZ runner and KAPE module jobs load their CSVs into the console automatically.
 
+## Execution evidence: Prefetch, ShimCache, Amcache, UserAssist, SRUM
+
+These five artifacts are where Windows records that a program existed or ran, and each one proves something different, so Sudo-Z reads them side by side instead of one at a time.
+
+| Artifact | Expected file (KAPE target) | Proves | Does not prove |
+|---|---|---|---|
+| Prefetch | `C:\Windows\Prefetch\*.pf` (Prefetch) | The program ran: run count, up to 8 last run times, files it touched at start | Off on Windows Server and when EnablePrefetcher = 0; about 1024 entries on Win8+ |
+| ShimCache | `SYSTEM` hive, AppCompatCache value (RegistryHives) | The file existed and was seen by the compatibility engine, with its last-modified time | Execution on Windows 10/11; newest entries are only written at shutdown |
+| Amcache | `C:\Windows\AppCompat\Programs\Amcache.hve` + logs (Amcache) | The program was present: full path, SHA1, publisher, version | Execution on its own; inventory tasks also add entries |
+| UserAssist | `C:\Users\<user>\NTUSER.DAT`, one per user (RegistryHives) | A named user launched it from the GUI: run count, last run, focus time | Command line, service and task starts |
+| SRUM | `C:\Windows\System32\sru\SRUDB.dat` + SOFTWARE (SRUM) | The program ran, per user and hour, for 30 to 60 days, with network bytes sent and received | The last hour (flushed hourly) and command lines |
+
+What you get:
+
+* **Coverage** on SITREP and in the report: which of the five were collected, how many entries, the time range they cover, and which are missing with the file to collect. User profiles whose NTUSER.DAT was not submitted are named.
+* **A matrix** in the GRID Programs view: one column per artifact (run counts, last runs, ShimCache position, Amcache SHA1, UserAssist user, SRUM bytes), plus **Executed?** (proven to run, or only present), **First run** and **Last run** across all of them. One-click filters: ran, ran with no Prefetch, present but never proven to run.
+* **Cross-artifact findings**, the things single tools do not show:
+  * **Ran, but no Prefetch file:** UserAssist, SRUM, BAM, Sysmon or 4688 show a run after the oldest run still covered by the Prefetch set, yet the program has no .pf. That is what targeted Prefetch deletion looks like.
+  * **Prefetch nearly empty** while dozens of programs show execution elsewhere (folder wiped), and **Prefetch disabled** (`EnablePrefetcher = 0` read from the SYSTEM hive, high when the key changed during the attack window).
+  * **Same path, different SHA1** in Amcache: the binary at that path was replaced (updates, or a trojanised copy).
+  * **Present, never proven to run:** suspicious files only ShimCache or Amcache saw. Staged tools, or programs whose other traces were removed.
+  * When the evidence names several hosts, the Prefetch checks say so and are toned down, since the artifacts may not be from the same machine.
+
 ## Signatures and the Programs view
 
 Every program seen anywhere (Prefetch, Amcache, ShimCache, BAM, UserAssist, SRUM, Sysmon, memory, persistence entries, files pulled out of a disk image) becomes one row in the Programs view, with what is known about its code signature:
