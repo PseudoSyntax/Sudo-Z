@@ -79,7 +79,7 @@ const le = csvBy(/LECmd_Output\.csv$/i);
 for (const f of sz((f) => f.tool === 'LECmd')) {
   const e = le.find((r) => base(r.sourcefile) === base(f.name));
   const mine = table(f, /Shortcut details/)?.rows.find((r) => r[0] === 'Target')?.[1] || '';
-  if (e) { const ez = e.localpath || e.networkpath || e.targetidabsolutepath || ''; add('LECmd', base(f.name) + ' target', base(ez), base(mine)); }
+  if (e) { const ez = e.localpath || e.networkpath || e.targetidabsolutepath || e.relativepath || ''; add('LECmd', base(f.name) + ' target', base(ez), base(mine), e.localpath ? '' : 'no LinkInfo: compared against RelativePath'); }
 }
 // JLECmd: entries per jump list
 const jl = csvBy(/(Automatic|Custom)Destinations\.csv$/i);

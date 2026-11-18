@@ -69,5 +69,6 @@ export function availability(c) {
   if (c.pages || c.home) return [c.pages, c.home];
   if (AVAIL_OVERRIDE[c.tool]) return AVAIL_OVERRIDE[c.tool];
   const pages = { full: 'Yes (Sudo-Z parser)', partial: 'Partial (Sudo-Z parser)', strings: 'Strings only', none: 'No' }[c.status] || 'No';
-  return [pages, 'Same, plus the original tool via the EZ runner (sudo-z setup ez)'];
+  if (c.tool === 'SrumECmd' || c.tool === 'SumECmd') return [pages, 'Same, plus the original tool via the EZ runner on Windows only (it needs Windows ESE libraries)'];
+  return [pages, 'Same, plus the original tool via the EZ runner (sudo-z setup; Windows, Linux and macOS)'];
 }
