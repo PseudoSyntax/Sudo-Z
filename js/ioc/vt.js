@@ -28,6 +28,14 @@ export const isUrl = (v) => /^[a-z][a-z0-9+.-]*:\/\//i.test(String(v || '').trim
 export const refang = (v) => String(v || '').trim()
   .replace(/\[\.\]|\(\.\)|\{\.\}/g, '.').replace(/\[:\]/g, ':').replace(/^h(xx|XX)p/, 'http').replace(/\[@\]|\(at\)/gi, '@');
 
+/** The VirusTotal page for anything at all: exact pages where we can, search where we cannot. */
+export function guiUrl(value) {
+  const k = kindOf(value);
+  if (k) return k.gui;
+  const v = refang(value).trim();
+  return v ? `https://www.virustotal.com/gui/search/${encodeURIComponent(v)}` : '';
+}
+
 /** What kind of thing is this, and where does it live on VirusTotal? */
 export function kindOf(value) {
   const v = refang(value);

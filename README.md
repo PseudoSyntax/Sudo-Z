@@ -299,12 +299,15 @@ The INTAKE panel shows a bar under the EXECUTE button with the percentage, the s
 
 ## VirusTotal, one click at a time
 
-Nothing is uploaded by Sudo-Z, and VirusTotal is the one place that could break that, so it is deliberate every time. A **VT** button sits beside every hash in ARTIFACTS and every indicator that can be looked up: hashes, domains, IPs and URLs. Values that cannot be looked up, such as an AV detection name, get no button.
+Nothing is uploaded by Sudo-Z, and VirusTotal is the one place that could break that, so the default needs no key and sends nothing at all.
+
+Beside every hash in ARTIFACTS and every indicator there is a **VT** link straight to the VirusTotal page for that value: the file page for a hash, the domain or ip-address page, the URL page for a URL, and a VirusTotal search for anything else, such as an AV detection name. It is a real link, so middle click and open-in-new-tab work as you expect, and the request comes from your own browser in your own session. Sudo-Z itself sends nothing and needs no API key for this.
+
+If you do set an API key, a second small control (⇩) appears next to the link and fetches the verdict into the console so you do not have to leave it. That path is the one that sends data, and it stays deliberate:
 
 * Nothing is sent automatically, in bulk, or on load. One click sends one value.
 * Files are never uploaded, only their hash. Worth remembering that looking a hash up tells VirusTotal somebody holds that file, which on a live intrusion is itself a tell.
 * The API key lives in this browser and is never written into a report, an export or an artifact.
-* With no key set there is still a button: it opens the VirusTotal page for that value in a new tab, so the request comes from your own browser session and Sudo-Z sends nothing at all.
 * Defanged indicators still work. `evil[.]example[.]com` and `hxxp://bad[.]com/a` are refanged before the lookup.
 
 The result opens beside the button: the verdict, the threat label and family, first seen and last analysed, the engines that flagged it, and for a file every hash variation VirusTotal holds, including imphash, the rich PE header hash, ssdeep, TLSH, vhash and authentihash. For a domain or IP it shows the registrar, AS owner, country and categories. The button itself then carries the verdict, so a page of indicators shows at a glance which ones you have already checked.
