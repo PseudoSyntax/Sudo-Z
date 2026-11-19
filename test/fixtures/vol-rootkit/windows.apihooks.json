@@ -1,0 +1,7 @@
+[
+{"PID":1500,"Process":"explorer.exe","Module":"ntdll.dll","Function":"NtCreateFile","Type":"inline","Hooked at":140715000000000,"Destination":2000000,"Destination owner":"unknown memory (not in any loaded module)","How":"mov reg,imm64 + jmp reg"},
+{"PID":1500,"Process":"explorer.exe","Module":"kernel32.dll","Function":"CreateProcessW","Type":"inline","Hooked at":140715000001000,"Destination":2000100,"Destination owner":"unknown memory (not in any loaded module)","How":"jmp rel32"},
+{"PID":1500,"Process":"explorer.exe","Module":"amsi.dll","Function":"AmsiScanBuffer","Type":"inline","Hooked at":140715000002000,"Destination":2000200,"Destination owner":"unknown memory (not in any loaded module)","How":"push/ret"},
+{"PID":900,"Process":"svchost.exe","Module":"ntdll.dll","Function":"NtReadVirtualMemory","Type":"inline","Hooked at":140715000003000,"Destination":140720000000000,"Destination owner":"edrsensor.dll","How":"jmp rel32"},
+{"PID":1500,"Process":"explorer.exe","Module":"ws2_32.dll","Function":"ws2_32.dll!send","Type":"iat","Hooked at":12345,"Destination":2000300,"Destination owner":"unknown memory (not in any loaded module)","How":"points outside every loaded module"}
+]

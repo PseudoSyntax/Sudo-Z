@@ -106,7 +106,7 @@ ok(rep.timeline.some((e) => /Document last saved \(OOXML metadata\)/.test(e.type
 ok(rep.macb?.anomalies.some((a) => a.rule === 'docModAfterFs' && /Q1\.docm/.test(a.path) && /ZIP entry/.test(a.detail)), 'docm saved after its archived file system M (NTFS extra times)');
 ok(!rep.macb?.anomalies.some((a) => a.rule === 'docModAfterFs' && /scan\.pdf/.test(a.path)), 'PDF with matching times is not flagged');
 ok(rep.macb?.embedded.some((e) => /ZIP entry \(UTC \(NTFS extra\)\)/.test(e.source) && e.M === '2024-01-01T00:00:00.0000000Z'), 'zip NTFS extra times recorded as container times');
-ok(rep.meta.version === '1.10.0', 'version 1.10.0');
+ok(rep.meta.version === '1.11.0', 'version 1.11.0');
 
 // ------------------------------------------------------------ 3. MFTECmd CSV: all eight times feed the same rules
 const H = 'EntryNumber,SequenceNumber,InUse,ParentEntryNumber,ParentSequenceNumber,ParentPath,FileName,Extension,FileSize,ReferenceCount,ReparseTarget,IsDirectory,HasAds,IsAds,SI<FN,uSecZeros,Copied,SiFlags,NameType,Created0x10,Created0x30,LastModified0x10,LastModified0x30,LastRecordChange0x10,LastRecordChange0x30,LastAccess0x10,LastAccess0x30,UpdateSequenceNumber,LogfileSequenceNumber,SecurityId,ObjectIdFileDroid,LoggedUtilStream,ZoneIdContents,SourceFile,ParseErrors';

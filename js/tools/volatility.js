@@ -10,7 +10,7 @@ import { utf8 } from '../core/bytes.js';
 import { expectedParents, isSingleton, BASELINE } from '../ioc/baseline.js';
 import { classifyPipe, normPipe, pipesInText } from '../ioc/pipes.js';
 import { injectionChecks } from './volinject.js';
-import { rootkitPlugin, rootkitFinal } from './volrootkit.js';
+import { rootkitPlugin, rootkitFinal, hookPlugin } from './volrootkit.js';
 
 const T = (title, columns, rows, note) => ({ title, columns, rows, note });
 
@@ -231,6 +231,7 @@ export function runVol(u8, f, ctx, shared) {
     }
     case 'registry.userassist': for (const r of rows) if (r.Name && r['Last Updated']) { ctx.exec_({ path: String(r.Name), time: r['Last Updated'], tool: 'Volatility 3', file: f.name, source: 'UserAssist (memory)' }); } tables.push(T('UserAssist (memory)', cols, rows.map((r) => cols.map((c) => r[c])))); break;
     default: {
+      if (hookPlugin(key, rows, note, tables)) break;
       if (rootkitPlugin(key, rows, note, tables, cols)) break;
       for (const r of rows.slice(0, 50000)) for (const v of Object.values(r)) if (typeof v === 'string' && v.length > 6) ctx.text(v, f.name);
       tables.push(T(`${plugin} output`, cols, rows.map((r) => cols.map((c) => r[c]))));
