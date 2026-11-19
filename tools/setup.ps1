@@ -114,7 +114,8 @@ function Find-Kape {
 function Install-Kape {
   # KAPE is free but licensed by Kroll behind a registration form, so it cannot be downloaded silently.
   $vpy = Join-Path $Dir 'venv\Scripts\python.exe'
-  $m = (Test-Path $vpy) -and ((& $vpy -c 'import memprocfs' 2>$null; $LASTEXITCODE) -eq 0)
+  $m = $false
+  if (Test-Path $vpy) { & $vpy -c 'import memprocfs' 2>$null | Out-Null; $m = ($LASTEXITCODE -eq 0) }
   Write-Host ("  MemProcFS       : {0}" -f $(if ($m) { 'yes' } else { 'no  (sudo-z setup memprocfs)' }))
   $k = Find-Kape
   if (-not $k) {
