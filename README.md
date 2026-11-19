@@ -1,6 +1,16 @@
-# Sudo-Z
+<p align="center">
+  <img src="assets/sudo-z-banner.png" alt="Sudo-Z" width="760">
+</p>
 
-**One console for the Eric Zimmerman toolset, rebuilt for the browser and focused on spotting IOCs.**
+<p align="center">
+  <b>One console for the Eric Zimmerman toolset, rebuilt for the browser and focused on spotting IOCs.</b>
+</p>
+
+<p align="center">
+  <a href="https://pseudosyntax.github.io/Sudo-Z/">Open the console</a> &nbsp;&middot;&nbsp;
+  <a href="docs/WORKFLOWS.md">Workflows and triage</a> &nbsp;&middot;&nbsp;
+  <a href="#website-vs-home-install">Home install</a>
+</p>
 
 Drop Windows artifacts (one file, many files, a folder, a KAPE triage zip or a Velociraptor collection) and Sudo-Z identifies each file, routes it to the parser that would handle it in Eric Zimmerman's toolset [1], runs shared detection logic across everything, and hands back an IOC report: verdict, prioritised findings with MITRE ATT&CK mapping, an indicator list, a super timeline and per-artifact tables. Volatility 3 memory analysis is part of the line-up too: on the website it grades Volatility's JSON output, and the home install runs Volatility itself against a memory image.
 
@@ -272,6 +282,10 @@ Checks against the times inside files and copies kept elsewhere:
 To keep the noise down, $MFT checks outside user-writable folders count only for programs, the same anomaly on 10 or more files in one folder is marked bulk and kept low (installers and archive extractions keep the archive's times), and a rule that fires on more than 2% of the volume is capped at medium with a note to check for a clock change. The Accessed time comes with a caveat read from the SYSTEM hive (`NtfsDisableLastAccessUpdate`): on most systems A is not updated or is updated lazily, so it is weak evidence.
 
 Where it shows: a MACB box on SITREP, four GRID views (anomalies, content vs file system times, bursts, and a mactime style MACB timeline of every $SI and $FN time with `macb` flags), a section in the report, `macb.csv`, and a body file for `mactime`. Documents also get their own findings: VBA macros, remote template injection (T1221), external OLE links, and PDF JavaScript, auto actions, Launch and embedded files.
+
+## While it runs
+
+The INTAKE panel shows a bar under the EXECUTE button with the percentage, the stage it is on (which parser, which file) and an estimate of the time left. The estimate comes from a smoothed recent rate rather than total elapsed time, because the work is not linear: opening disk images is the first 40 per cent and parsing is the rest. It holds off until there is enough of a run to base a number on, so a short job never flashes a silly figure, and it will correct upwards if a large image turns up part way through rather than only ever counting down. If the bar stops moving while the stage label keeps changing, it says "still working" instead of showing a stale countdown.
 
 ## GREP: searching every file at once
 

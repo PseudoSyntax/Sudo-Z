@@ -64,7 +64,7 @@ $('#clear').addEventListener('click', () => { S.staged = []; renderStaged(); });
 
 $('#run').addEventListener('click', async () => {
   const btn = $('#run'); btn.disabled = true; $('#clear').disabled = true;
-  $('#progress').hidden = false; setProg(0, 'reading files');
+  $('#progress').hidden = false; progReset(); setProg(0, 'reading files');
   const files = [];
   for (const s of S.staged) files.push(s.http ? { name: s.name, http: s.http } : { name: s.name, file: s.file }); // the worker reads them (disk images lazily)
   let worker;
@@ -94,7 +94,50 @@ async function mainThread(files, done) {
   try { done(await analyze(inputs, { onProgress: setProg, onFiles: (k) => { S.kept = k; } })); }
   catch (e) { setProg(0, 'ERROR: ' + e.message); $('#run').disabled = false; }
 }
-function setProg(p, label) { $('#pfill').style.width = Math.round(p * 100) + '%'; $('#plabel').textContent = label || ''; }
+// progress, percentage and time left. The engine's progress is not linear (opening images is
+// the first 40%, parsing the rest), so the estimate comes from a smoothed recent rate rather
+// than from total elapsed time, and it never counts up.
+const PROG = { t0: 0, samples: [], lastEta: 0, lastShown: 0, stall: 0, done: false };
+function progReset() { PROG.t0 = Date.now(); PROG.samples = []; PROG.lastEta = 0; PROG.lastShown = 0; PROG.stall = 0; PROG.done = false; $('#ppct').textContent = '0%'; $('#peta').textContent = ''; }
+const hhmm = (ms) => {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 5) return 'a few seconds left';
+  if (s < 60) return `about ${Math.max(5, Math.round(s / 5) * 5)}s left`;
+  if (s < 3600) { const m = Math.floor(s / 60); return `about ${m}m ${String(s % 60).padStart(2, '0')}s left`; }
+  return `about ${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m left`;
+};
+function setProg(p, label) {
+  p = Math.max(0, Math.min(1, Number(p) || 0));
+  const now = Date.now();
+  if (!PROG.t0) PROG.t0 = now;
+  $('#pfill').style.width = (p * 100).toFixed(1) + '%';
+  $('#plabel').textContent = label || '';
+  const pct = $('#ppct'), eta = $('#peta');
+  if (!pct || !eta) return;
+  if (p >= 1) { PROG.done = true; pct.textContent = '100%'; eta.textContent = ''; return; }
+  if (PROG.done) return;
+  pct.textContent = (p < 0.1 ? (p * 100).toFixed(1) : String(Math.floor(p * 100))) + '%';
+  // keep the last few seconds of samples and work the rate out from them
+  PROG.samples.push([now, p]);
+  while (PROG.samples.length > 2 && now - PROG.samples[0][0] > 8000) PROG.samples.shift();
+  const [t1, p1] = PROG.samples[0], dt = now - t1, dp = p - p1;
+  // hold the estimate back until there is enough of a run to base one on: a short job should
+  // never flash "about a minute left" on its way to finishing in five seconds
+  const elapsed = now - PROG.t0;
+  if (p < 0.08 || elapsed < 2500 || dt < 1200 || dp <= 0) {
+    if (!PROG.lastEta) eta.textContent = 'estimating\u2026';
+    // the label keeps moving while the bar does not, so say so rather than show a stale countdown
+    else if (PROG.stall && now - PROG.stall > 15000) eta.textContent = 'still working\u2026';
+    return;
+  }
+  const raw = (dt / dp) * (1 - p);
+  // Smooth it. Coming down is quick, going up is slow: the estimate should settle rather than
+  // jitter, but it must still be able to correct itself when the work turns out to be heavier
+  // (a large disk image part way through), because a figure that only ever falls is a lie.
+  PROG.lastEta = !PROG.lastEta ? raw : raw < PROG.lastEta ? PROG.lastEta * 0.7 + raw * 0.3 : PROG.lastEta * 0.85 + raw * 0.15;
+  PROG.stall = now;
+  if (now - PROG.lastShown > 500) { PROG.lastShown = now; eta.textContent = hhmm(PROG.lastEta); }
+}
 
 // ---------------------------------------------------------------- tabs + exports
 $('#tabs').addEventListener('click', (e) => {
