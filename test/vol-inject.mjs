@@ -8,7 +8,7 @@ const t = rep.findings.map((f) => `${f.sev} ${f.title}`);
 const want = [
   /critical .*lsass\.exe \(PID 700\) has 1 loaded module\(s\) with no file behind them \(MappedPath N\/A\)/,
   /critical .*lsass\.exe \(PID 700\) loaded 1 DLL\(s\) from outside/,
-  /critical .*MZ header wiped/,
+  /critical .*(MZ header wiped|MZ header erased)/,
   /critical .*code injection in lsass\.exe \(PID 700\) confirmed/,
   /critical .*Skeleton Key/,
   /high .*notepad\.exe \(PID 1500\) main module maps svchost\.exe/,

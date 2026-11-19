@@ -22,6 +22,7 @@ const KNOWN = [
   { rx: /^csexecsvc/i, tool: 'CSExec', sev: 'high', mitre: ['T1569.002', 'T1021.002'] },
   { rx: /^gruntsvc$/i, tool: 'Covenant Grunt (default)', sev: 'critical', mitre: ['T1090.001'] },
   { rx: /^jaccdpqnvbrrxlaf$/i, tool: 'PoshC2 (default)', sev: 'critical', mitre: ['T1090.001'] },
+  { rx: /^msf-pipe/i, tool: 'Metasploit named pipe payload (default)', sev: 'critical', mitre: ['T1090.001', 'T1055'] },
   { rx: /^(mimikatz|kekeo|lsadump)/i, tool: 'Credential dumping tool', sev: 'critical', mitre: ['T1003'] },
   { rx: /^(RoguePotato|JuicyPotato|SweetPotato|GodPotato|EfsPotato|PrintSpoofer)/i, tool: 'Potato / PrintSpoofer privilege escalation', sev: 'critical', mitre: ['T1134.001'] },
 ];

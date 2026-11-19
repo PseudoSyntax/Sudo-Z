@@ -11,6 +11,7 @@ import { expectedParents, isSingleton, BASELINE } from '../ioc/baseline.js';
 import { classifyPipe, normPipe, pipesInText } from '../ioc/pipes.js';
 import { injectionChecks } from './volinject.js';
 import { rootkitPlugin, rootkitFinal, hookPlugin } from './volrootkit.js';
+import { classifyShellcode, shellcodeMarks, normHex } from '../ioc/shellcode.js';
 
 const T = (title, columns, rows, note) => ({ title, columns, rows, note });
 
@@ -126,17 +127,29 @@ export function runVol(u8, f, ctx, shared) {
     case 'malfind': {
       const per = new Map();
       for (const r of rows) {
-        const mz = /^4d 5a/i.test(String(r.Hexdump || '').trim());
-        const shell = /^(fc 48 83 e4|fc e8|e8 00 00 00 00|55 8b ec|48 89 5c 24|4c 8b dc|eb fe)/i.test(String(r.Hexdump || '').trim());
-        const p = per.get(r.PID) || { proc: r.Process, n: 0, mz: 0, shell: 0, regions: [] };
-        p.n++; if (mz) p.mz++; if (shell) p.shell++; p.regions.push(`${r['Start VPN']} ${r.Protection}${mz ? ' MZ' : ''}${shell ? ' shellcode-like' : ''}`); per.set(r.PID, p);
+        const hd = r.Hexdump || r.Disasm || '';
+        const sig = classifyShellcode(hd);
+        const marks = shellcodeMarks(hd);
+        const mz = /^4d 5a/i.test(normHex(hd));
+        const p = per.get(r.PID) || { proc: r.Process, n: 0, mz: 0, named: new Map(), regions: [] };
+        p.n++; if (mz) p.mz++;
+        if (sig && !sig.benign) { const e = p.named.get(sig.id) || { sig, n: 0, where: [] }; e.n++; e.where.push(String(r['Start VPN'])); p.named.set(sig.id, e); }
+        p.regions.push(`${r['Start VPN']} ${r.Protection}${marks.length ? '  ' + marks.join(' + ') : sig && sig.benign ? `  (${sig.family})` : ''}`);
+        per.set(r.PID, p);
       }
       for (const [pid, p] of per) {
         const jit = /^(chrome|msedge|firefox|iexplore|msmpeng|teams|ms-teams|slack|discord|code|node|java|javaw|dotnet|powershell_ise|onedrive|searchapp|smartscreen|devenv)\.exe$/i.test(p.proc || '');
-        const sev = p.mz ? 'critical' : p.shell ? 'high' : jit ? 'low' : 'medium';
-        note(sev, `${p.n} injected/executable private region(s) in ${p.proc} (PID ${pid})${p.mz ? ', contains PE header' : ''}`, jit && !p.mz ? 'Process uses JIT; RWX memory is common, review the disassembly.' : 'PAGE_EXECUTE_READWRITE private memory not backed by a file.', p.regions.slice(0, 10).join('\n'), ['T1055'], 'Defense Evasion');
+        // a named implant signature is the finding; the region count is only the context
+        for (const { sig, n, where } of p.named.values()) {
+          note(sig.sev, `${sig.family} in ${p.proc} (PID ${pid})${n > 1 ? `, ${n} region(s)` : ''}`,
+            `${sig.why}${jit ? ' This process runs a just in time compiler, so executable private memory on its own would be unremarkable here, but these opening bytes are not something a JIT emits.' : ''} Next: ${sig.next}`,
+            where.slice(0, 10).map((w) => `${w}  ${p.regions.find((x) => x.startsWith(w)) || ''}`).join('\n'), sig.mitre, 'Defense Evasion');
+        }
+        if (p.named.size) continue;
+        const sev = p.mz ? 'critical' : jit ? 'low' : 'medium';
+        note(sev, `${p.n} injected/executable private region(s) in ${p.proc} (PID ${pid})${p.mz ? ', contains PE header' : ''}`, jit && !p.mz ? 'Process uses JIT; RWX memory is common, review the disassembly.' : 'PAGE_EXECUTE_READWRITE private memory not backed by a file. The opening bytes match no implant signature Sudo-Z knows, so read the disassembly before deciding.', p.regions.slice(0, 10).join('\n'), ['T1055'], 'Defense Evasion');
       }
-      tables.push(T('Malfind regions', ['PID', 'Process', 'Start', 'End', 'Protection', 'Tag', 'Hexdump'], rows.map((r) => [r.PID, r.Process, r['Start VPN'], r['End VPN'], r.Protection, r.Tag, String(r.Hexdump || '').slice(0, 96)])));
+      tables.push(T('Malfind regions', ['PID', 'Process', 'Start', 'End', 'Protection', 'Tag', 'Identified as', 'Hexdump'], rows.map((r) => { const sig = classifyShellcode(r.Hexdump || r.Disasm || ''); return [r.PID, r.Process, r['Start VPN'], r['End VPN'], r.Protection, r.Tag, sig ? (sig.benign ? `(${sig.family})` : sig.family) : '', String(r.Hexdump || '').slice(0, 96)]; }), 'Identified as names the implant from the opening bytes. A value in brackets is an ordinary prologue, not a detection.'));
       break;
     }
     case 'psxview': break; // merged with pspcid / sessionprocs / deskscan in crossView()

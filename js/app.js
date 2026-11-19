@@ -18,7 +18,7 @@ const SEVS = ['critical', 'high', 'medium', 'low', 'info'];
 const SEV_SHORT = { critical: 'CRIT', high: 'HIGH', medium: 'MED', low: 'LOW', info: 'INFO' };
 const isTimeCol = (c) => /time|created|modified|accessed|last|first|start|end|deleted|write|logon|run|when|date|visit/i.test(c);
 
-const S = { staged: [], rep: null, tab: 'sitrep', f: { sev: new Set(['critical', 'high', 'medium', 'low', 'info']), q: '', cat: '' }, tl: { q: '', tool: '', page: 0 }, ind: { q: '', type: '', defang: true }, art: { q: '' }, inv: { q: '' }, so: { mode: 'builtin', query: '', list: '', patterns: ['url3986', 'ipv4', 'email', 'unc', 'flag', 'pwsh_enc'], min: 3, max: 0, ascii: true, unicode: true, caseSensitive: false, onlyMatch: true, fileFilter: '', maxSizeMb: 0, images: false, limit: 200000 }, sgrid: { ds: null, tagsBy: {}, widthsBy: {}, q: '', filters: {}, hidden: new Set(), collapsed: new Set(), group: -1 }, grid: { ds: null, tagsBy: {}, widthsBy: {}, q: '', filters: {}, hidden: new Set(), collapsed: new Set(), group: -1 } };
+const S = { staged: [], rep: null, tab: 'sitrep', f: { sev: new Set(['critical', 'high', 'medium', 'low', 'info']), q: '', cat: '' }, tl: { q: '', tool: '', page: 0 }, ind: { q: '', type: '', defang: true }, art: { q: '' }, inv: { q: '' }, so: { mode: 'builtin', query: '', list: '', patterns: ['url3986', 'ipv4', 'email', 'unc', 'flag', 'pwsh_enc', 'implant'], min: 3, max: 0, ascii: true, unicode: true, caseSensitive: false, onlyMatch: true, output: 'all', invert: false, fileFilter: '', maxSizeMb: 0, images: false, limit: 200000 }, sgrid: { ds: null, tagsBy: {}, widthsBy: {}, q: '', filters: {}, hidden: new Set(), collapsed: new Set(), group: -1 }, grid: { ds: null, tagsBy: {}, widthsBy: {}, q: '', filters: {}, hidden: new Set(), collapsed: new Set(), group: -1 } };
 
 // ---------------------------------------------------------------- clock
 setInterval(() => { $('#clock').textContent = new Date().toISOString().slice(11, 19) + ' UTC'; }, 1000);
@@ -277,8 +277,12 @@ function gridView(v) {
 
 // ---------------------------------------------------------------- STRINGS (bstrings)
 const PGROUPS = [
-  ['Network and IOCs', ['url3986', 'urlUser', 'ipv4', 'ipv6', 'email', 'unc', 'mac', 'win_path', 'reg_path', 'sid', 'guid', 'var_set']],
-  ['Encoded data and secrets', ['b64', 'pwsh_enc', 'bitlocker', 'ntlm', 'privkey', 'xml']],
+  ['Network and IOCs', ['url', 'url3986', 'urlUser', 'ipv4', 'priv_ip', 'ipv6', 'domain', 'onion', 'port_url', 'email', 'unc', 'mac', 'win_path', 'reg_path', 'sid', 'guid', 'var_set']],
+  ['Web and HTTP', ['http_req', 'useragent', 'jwt']],
+  ['Hashes and identifiers', ['md5', 'sha1', 'sha256', 'cve']],
+  ['Windows attack surface', ['run_key', 'lolbin_cmd']],
+  ['Encoded data and secrets', ['b64', 'b64_blob', 'pwsh_enc', 'bitlocker', 'ntlm', 'privkey', 'xml']],
+  ['Implants', ['implant']],
   ['CTF', ['flag']],
   ['Crypto wallets', ['bitcoin', 'monero', 'aeon', 'bytecoin', 'dashcoin', 'dashcoin2', 'fantomcoin', 'sumokoin']],
   ['Personal data', ['ssn', 'cc', 'usPhone', 'zip']],
@@ -293,7 +297,7 @@ function stringsSearch(opts, onMsg) {
 function stringsView(v) {
   const o = S.so;
   const nfiles = S.rep.files.filter((f) => f.status !== 'rejected' || true).length;
-  v.innerHTML = `<div class="box"><div class="ph"><span class="code">S</span> BSTRINGS: search every loaded file for ASCII and Unicode strings</div><div class="body strings-form">
+  v.innerHTML = `<div class="box"><div class="ph"><span class="code">S</span> GREP: search every loaded file at once (bstrings compatible)</div><div class="body strings-form">
     <div class="row">
       <label>MODE <select id="smode">
         <option value="builtin" ${o.mode === 'builtin' ? 'selected' : ''}>Built-in patterns (--lr name)</option>
@@ -302,10 +306,11 @@ function stringsView(v) {
         <option value="list" ${o.mode === 'list' ? 'selected' : ''}>List of strings (--fs)</option>
         <option value="all" ${o.mode === 'all' ? 'selected' : ''}>Every string (no filter)</option>
       </select></label>
-      <input type="text" id="squery" placeholder="${o.mode === 'regex' ? 'regex, e.g. flag\\{[^}]+\\}' : 'text to find'}" value="${esc(o.query)}" ${o.mode === 'text' || o.mode === 'regex' ? '' : 'hidden'}>
+      <input type="text" id="squery" placeholder="${o.mode === 'regex' ? 'regex, e.g. flag\\{[^}]+\\}  (several lines = several patterns)' : 'text to find'}" value="${esc(o.query)}" ${o.mode === 'text' || o.mode === 'regex' ? '' : 'hidden'}>
       <button class="btn" id="sgo">SEARCH</button>
     </div>
     <textarea id="slist" rows="4" placeholder="one string per line" ${o.mode === 'list' ? '' : 'hidden'}>${esc(o.list)}</textarea>
+    <textarea id="sextra" rows="2" placeholder="optional: your own regex as well, one per line" ${o.mode === 'builtin' ? '' : 'hidden'}>${esc(o.mode === 'builtin' ? o.query : '')}</textarea>
     <div class="pats" ${o.mode === 'builtin' ? '' : 'hidden'}>${PGROUPS.map(([g, names]) => `<div class="pg"><b>${esc(g)}</b>${names.map((n) => `<label title="${esc(BUILTIN[n][0])}"><input type="checkbox" data-pat="${n}" ${o.patterns.includes(n) ? 'checked' : ''}> ${n}</label>`).join('')}</div>`).join('')}</div>
     <div class="row opts">
       <label>min (-m) <input type="number" id="smin" min="1" value="${o.min}"></label>
@@ -317,14 +322,21 @@ function stringsView(v) {
       <label>files matching <input type="text" id="sfilt" placeholder="name or regex (--mask)" value="${esc(o.fileFilter)}"></label>
       <label>max file MB (--ms) <input type="number" id="sms" min="0" value="${o.maxSizeMb}"></label>
       <label class="chk" title="Search the raw bytes of dropped disk and memory images too, not only the files pulled out of them. Slow on big images."><input type="checkbox" id="simg" ${o.images ? 'checked' : ''}> whole disk / memory images</label>
+      <label>show <select id="sout">
+        <option value="all" ${o.output === 'all' ? 'selected' : ''}>every match</option>
+        <option value="files" ${o.output === 'files' ? 'selected' : ''}>files with matches (-l)</option>
+        <option value="count" ${o.output === 'count' ? 'selected' : ''}>match count per file (-c)</option>
+      </select></label>
+      <label class="chk" title="Keep the strings that match nothing, like grep -v"><input type="checkbox" id="sinv" ${o.invert ? 'checked' : ''}> invert (-v)</label>
       <label>result limit <input type="number" id="slim" min="1000" step="1000" value="${o.limit}"></label>
     </div>
     <div class="fine">Searches the ${nfiles} file(s) of the last analysis in this browser, including files pulled from disk images and zips. Offsets are byte offsets in each file (A = ASCII, U = UTF-16LE), like bstrings --off.${LOCAL.caps?.ez?.tools?.includes('bstrings') ? ' On this machine you can also run the real bstrings.exe on any folder: <a href="#" id="sreal">RUN REAL BSTRINGS</a>.' : ''}</div>
     <div class="sstat" id="sstat">${S.strings ? esc(S.strings.summary) : ''}</div>
   </div></div><div id="sgrid" class="dgrid" ${S.strings ? '' : 'hidden'}></div>`;
   const read = () => {
-    Object.assign(o, { mode: $('#smode').value, query: $('#squery').value, list: $('#slist').value, min: Math.max(1, +$('#smin').value || 3), max: Math.max(0, +$('#smax').value || 0), ascii: $('#sasc').checked, unicode: $('#suni').checked, caseSensitive: $('#scase').checked, onlyMatch: $('#sro').checked, fileFilter: $('#sfilt').value.trim(), maxSizeMb: +$('#sms').value || 0, images: $('#simg').checked, limit: Math.max(1000, +$('#slim').value || 200000) });
+    Object.assign(o, { mode: $('#smode').value, query: $('#squery').value, list: $('#slist').value, min: Math.max(1, +$('#smin').value || 3), max: Math.max(0, +$('#smax').value || 0), ascii: $('#sasc').checked, unicode: $('#suni').checked, caseSensitive: $('#scase').checked, onlyMatch: $('#sro').checked, fileFilter: $('#sfilt').value.trim(), maxSizeMb: +$('#sms').value || 0, images: $('#simg').checked, limit: Math.max(1000, +$('#slim').value || 200000), output: $('#sout').value, invert: $('#sinv').checked });
     o.patterns = [...v.querySelectorAll('[data-pat]:checked')].map((x) => x.dataset.pat);
+    if (o.mode === 'builtin') o.query = $('#sextra').value; // the extra regexes are ORed with the ticked patterns
   };
   $('#smode').addEventListener('change', () => { read(); stringsView(v); });
   const go = () => {
@@ -340,7 +352,7 @@ function stringsView(v) {
       $('#sgo') && ($('#sgo').disabled = false);
       if (m.type === 'serror') { $('#sstat').textContent = 'Search failed: ' + m.message; return; }
       const r = m.res;
-      S.strings = { rows: r.rows, n: (S.strings?.n || 0) + 1, summary: `${r.rows.length.toLocaleString()} hit(s) in ${r.files} file(s), ${(r.scanned / 1024 ** 2).toFixed(1)} MB scanned in ${((Date.now() - t0) / 1000).toFixed(1)}s${r.truncated ? ` (stopped at the ${o.limit.toLocaleString()} result limit)` : ''}` };
+      S.strings = { rows: r.rows, cols: r.columns || null, n: (S.strings?.n || 0) + 1, summary: `${r.output === 'files' ? `${r.rows.length.toLocaleString()} of ${r.files} file(s) matched` : r.output === 'count' ? `${r.rows.reduce((n, x) => n + x[1], 0).toLocaleString()} hit(s) across ${r.rows.length.toLocaleString()} of ${r.files} file(s)` : `${r.rows.length.toLocaleString()} hit(s) in ${r.files} file(s)`}, ${(r.scanned / 1024 ** 2).toFixed(1)} MB scanned in ${((Date.now() - t0) / 1000).toFixed(1)}s${r.truncated ? ` (stopped at the ${o.limit.toLocaleString()} result limit)` : ''}` };
       if (S.tab === 'strings') stringsView(v);
     });
   };
@@ -349,8 +361,11 @@ function stringsView(v) {
   $('#sreal')?.addEventListener('click', (e) => { e.preventDefault(); realBstrings(); });
   if (S.strings) {
     const rows = S.strings.rows;
-    const ds = { id: 'strings:' + S.strings.n, cols: ['File', 'Offset', 'Enc', 'Length', 'String', 'Pattern'], rows: () => rows.map((r) => [r[0], '0x' + Number(r[1]).toString(16).toUpperCase(), r[2], r[3], r[4], r[5]]), sevCol: -1, keyCols: [4] };
-    new Grid($('#sgrid'), S.sgrid, { onPivot: () => { const row = rows[S.sgrid.sel]; if (row) { S.inv.q = row[4].slice(0, 120); switchTab('investigate'); } } }).open(ds);
+    const perFile = !!S.strings.cols;
+    const ds = perFile
+      ? { id: 'strings:' + S.strings.n, cols: S.strings.cols, rows: () => rows.map((r) => [r[0], r[1], r[2], '0x' + Number(r[3]).toString(16).toUpperCase()]), sevCol: -1, keyCols: [0] }
+      : { id: 'strings:' + S.strings.n, cols: ['File', 'Offset', 'Enc', 'Length', 'String', 'Pattern'], rows: () => rows.map((r) => [r[0], '0x' + Number(r[1]).toString(16).toUpperCase(), r[2], r[3], r[4], r[5]]), sevCol: -1, keyCols: [4] };
+    new Grid($('#sgrid'), S.sgrid, { onPivot: () => { const row = rows[S.sgrid.sel]; if (row) { S.inv.q = String(perFile ? row[0] : row[4]).slice(0, 120); switchTab('investigate'); } } }).open(ds);
   }
 }
 /** Home install: run the real bstrings.exe on a folder or file with the current options. */

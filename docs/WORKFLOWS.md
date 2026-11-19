@@ -110,16 +110,16 @@ When positive:
 
 ### 2.10 Memory (Volatility 3)
 
-Detects: hidden processes (psscan versus pslist, DKOM unlink), name versus command line mismatches, malfind, hollowing, process ghosting, PEB masquerading, unbacked threads, direct, indirect and unhooked syscalls, ETW patching, Skeleton Key. LSASS and other key processes are checked for unexpected mapped paths (a MappedPath of N/A where a file is expected). Rootkit checks cover SSDT hooks from both the global table and per-thread KTHREAD tables (Sudo-Z's own plugin), driver and module cross views, callbacks, IRP hooks, timers, orphan kernel threads, the service list cross-view and the device tree. Volatility 2's `apihooks` and `idt` were never ported to Volatility 3, so Sudo-Z ships its own: inline and import table hooks on exported functions, and every processor's Interrupt Descriptor Table. Hidden processes are judged on seven cross-views: Volatility 3's psxview gives four (pslist, psscan, thrdscan, csrss) and Sudo-Z adds PspCidTable, session process lists and desktop threads, with Volatility 2's `-R` rules built in so System, smss.exe, csrss.exe and exited processes are explained rather than flagged. Named pipes are checked against known tool pipes, random names and Potato style impersonation [7, 20, 21, 22].
+Detects: hidden processes (psscan versus pslist, DKOM unlink), name versus command line mismatches, malfind regions named by their opening bytes (Meterpreter and Metasploit stagers, block_api PEB walks, reflective DLLs such as metsrv, erased PE headers, direct syscall stubs), hollowing, process ghosting, PEB masquerading, unbacked threads, direct, indirect and unhooked syscalls, ETW patching, Skeleton Key. LSASS and other key processes are checked for unexpected mapped paths (a MappedPath of N/A where a file is expected). Rootkit checks cover SSDT hooks from both the global table and per-thread KTHREAD tables (Sudo-Z's own plugin), driver and module cross views, callbacks, IRP hooks, timers, orphan kernel threads, the service list cross-view and the device tree. Volatility 2's `apihooks` and `idt` were never ported to Volatility 3, so Sudo-Z ships its own: inline and import table hooks on exported functions, and every processor's Interrupt Descriptor Table. Hidden processes are judged on seven cross-views: Volatility 3's psxview gives four (pslist, psscan, thrdscan, csrss) and Sudo-Z adds PspCidTable, session process lists and desktop threads, with Volatility 2's `-R` rules built in so System, smss.exe, csrss.exe and exited processes are explained rather than flagged. Named pipes are checked against known tool pipes, random names and Potato style impersonation [7, 20, 21, 22].
 
 When positive:
 * **Automatic:** when two or more independent plugins flag the same PID, an injection finding is raised to critical: **code injection confirmed by N plugins**. Process and network results feed the execution list, indicators and the timeline, so they join the disk evidence in leads [20].
 * **Next line:** dump the process, compare the in-memory image with the file on disk, and capture a full image before rebooting for rootkits [2].
 * **Not automatic:** Sudo-Z does not dump the flagged process by itself. Run procdump or `vol windows.memmap --dump --pid N` next.
 
-### 2.11 Strings (bstrings)
+### 2.11 Strings and grep (bstrings)
 
-Searches every file (and disk image file) with bstrings style patterns: URLs, IPs, emails, paths, registry keys, base64, GUIDs, crypto wallets and keywords. The home install can run the real bstrings.exe [23].
+Searches every file (and disk image file) with bstrings style patterns: URLs, IPs, emails, paths, registry keys, base64, GUIDs, crypto wallets, hashes, CVEs, JWTs, HTTP requests, user agents, autostart keys, LOLBin command lines, implant strings and keywords. Several patterns can run at once alongside your own regexes, with grep's files-with-matches, count-per-file and invert modes. The home install can run the real bstrings.exe [23].
 
 When positive: hits become indicators. String findings have no time, so the Next line asks you to find the parsed artifact that confirms them [2].
 
@@ -183,6 +183,6 @@ Each lead carries its evidence, entities to pivot on and a Next line [11].
 20. `js/tools/volinject.js`
 21. `js/tools/volrootkit.js`, `js/tools/volatility.js` crossView(), `tools/volplugins/windows/` (kthread_ssdt.py, pspcid.py, sessionprocs.py, idt.py, apihooks.py)
 22. `js/ioc/pipes.js`
-23. `js/core/bsearch.js`
+23. `js/core/bsearch.js`, `js/core/strings.js`, `js/ioc/shellcode.js`
 24. `js/report.js`
 25. `js/tools/memprocfs.js`, `tools/mpfs_run.py`
