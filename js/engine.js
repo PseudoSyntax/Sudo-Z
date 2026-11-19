@@ -33,7 +33,7 @@ import { OOXML_EXT, OLE_EXT, isPdf } from './parsers/docmeta.js';
 import { runDoc } from './tools/documents.js';
 import { detectEzCsv, runEzCsv } from './tools/ezcsv.js';
 
-export const VERSION = '1.9.0';
+export const VERSION = '1.10.0';
 const MAX_ZIP_DEPTH = 3;
 const MAX_FILE = 1.5 * 1024 ** 3;
 
@@ -262,7 +262,13 @@ export async function analyze(inputs, opts = {}) {
   for (const r of rejected) results.push({ name: r.name, size: r.size, parent: r.parent, status: 'rejected', reason: r.reason, tool: '-', artifact: '', summary: '', tables: [], notes: [] });
 
   onProgress(0.99, 'Building report');
-  try { finalizeVol(shared, ctx); } catch (e) { log('volatility correlation failed: ' + e.message); }
+  try {
+    finalizeVol(shared, ctx);
+    for (const t of shared.volTables || []) { // cross-view tables built from several plugin outputs
+      const host = results.find((r) => r.name === (shared.volFile?.psxview || shared.volFile?.pspcid)) || results.find((r) => r.tool === 'Volatility 3');
+      if (host) host.tables.push(t);
+    }
+  } catch (e) { log('volatility correlation failed: ' + e.message); }
   // correlation: same suspicious program seen by multiple execution artifacts
   for (const [name, list] of ctx.exec) {
     const sources = [...new Set(list.map((l) => l.source))];

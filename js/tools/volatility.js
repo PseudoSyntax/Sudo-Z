@@ -139,15 +139,10 @@ export function runVol(u8, f, ctx, shared) {
       tables.push(T('Malfind regions', ['PID', 'Process', 'Start', 'End', 'Protection', 'Tag', 'Hexdump'], rows.map((r) => [r.PID, r.Process, r['Start VPN'], r['End VPN'], r.Protection, r.Tag, String(r.Hexdump || '').slice(0, 96)])));
       break;
     }
-    case 'psxview': {
-      for (const r of rows) {
-        if (r.pslist || r['Exit Time'] || !(r.psscan || r.thrdscan || r.csrss)) continue;
-        const views = ['psscan', 'thrdscan', 'csrss'].filter((c) => r[c]);
-        note(views.length >= 2 ? 'critical' : 'high', `Process unlinked from the active process list (DKOM): ${r.Name} (PID ${r.PID})`, `Not in the ActiveProcessLinks list that Task Manager and most tools walk, but still found by ${views.join(', ')}. Rootkits hide processes by unlinking their EPROCESS (direct kernel object manipulation).`, `pslist=${r.pslist} psscan=${r.psscan} thrdscan=${r.thrdscan} csrss=${r.csrss}`, ['T1014', 'T1564'], 'Defense Evasion');
-      }
-      tables.push(T('Cross-view process listing', ['Name', 'PID', 'pslist', 'psscan', 'thrdscan', 'csrss', 'ExitTime'], rows.map((r) => [r.Name, r.PID, r.pslist, r.psscan, r.thrdscan, r.csrss, r['Exit Time']])));
-      break;
-    }
+    case 'psxview': break; // merged with pspcid / sessionprocs / deskscan in crossView()
+    case 'pspcid': tables.push(T('PspCidTable processes', ['Offset(V)', 'Name', 'PID', 'PPID', 'CreateTime', 'ExitTime'], rows.map((r) => [r['Offset(V)'], r.Name, r.PID, r.PPID, r.CreateTime, r.ExitTime]), 'The kernel object table of every process ID. A rootkit that unlinks an EPROCESS from the active process list usually leaves this entry behind.')); break;
+    case 'sessionprocs': tables.push(T('Processes on session process lists', ['Offset(V)', 'Name', 'PID', 'SessionId', 'CreateTime', 'ExitTime'], rows.map((r) => [r['Offset(V)'], r.Name, r.PID, r.SessionId, r.CreateTime, r.ExitTime]))); break;
+    case 'deskscan': tables.push(T('Desktop threads', ['Desktop', 'Window station', 'Session', 'Process', 'PID'], rows.map((r) => [r.Desktop || r['Desktop Name'], r['Window Station'] || r.WindowStation, r['Session ID'] ?? r.SessionId, r.Process || r['Process Name'], r.PID]), 'Processes that own a thread attached to a desktop (the psxview deskthrd view).')); break;
     case 'ldrmodules': {
       // graded in the final pass (volinject.js) together with malfind, pstree and dlllist
       for (const r of rows) { const mp = String(r.MappedPath || ''); if (mp && classifyPath(mp).sev && /\.dll$/i.test(mp)) note('medium', `DLL loaded from suspicious path in ${r.Process}: ${baseName(mp)}`, classifyPath(mp).reasons.join('; '), mp, ['T1574.002'], 'Defense Evasion'); }
@@ -276,7 +271,9 @@ export function finalizeVol(shared, ctx) {
     const extra = chosen !== 'psscan' && v.psscan ? v.psscan.filter((r) => !ids.has(`${r.PID}|${procName(r)}`)) : [];
     processRules(v[chosen], extra, shared.volFile[chosen], ctx);
   }
-  if (v.pslist && v.psscan) {
+  try { crossView(v, shared, ctx); } catch (e) { ctx.finding({ sev: 'info', category: 'Memory', tool: 'Volatility 3', file: '', title: 'Memory: cross-view process check failed: ' + e.message }); }
+  // only when no cross-view ran, otherwise crossView() raises the better finding
+  if (v.pslist && v.psscan && !v.psxview && !v.pspcid && !v.sessionprocs && !v.deskscan) {
     const live = new Set(v.pslist.map((r) => `${r.PID}|${String(r.ImageFileName).toLowerCase()}`));
     for (const r of v.psscan) {
       if (r.ExitTime || live.has(`${r.PID}|${String(r.ImageFileName).toLowerCase()}`)) continue;
@@ -317,4 +314,104 @@ function namedPipes(v, shared, ctx) {
   for (const r of v.filescan || []) if (/^\\?(Device\\)?NamedPipe\\|\\NamedPipe\\/i.test(r.Name || '')) report(String(r.Name).replace(/^.*?NamedPipe\\/i, ''), {}, shared.volFile.filescan, 'windows.filescan (no owner)');
   for (const r of v.pstree || []) for (const p of pipesInText(r.Cmd)) report(p, { name: r.ImageFileName, pid: r.PID, path: r.Path }, shared.volFile.pstree, 'command line');
   for (const r of v.cmdline || []) for (const p of pipesInText(r.Args)) report(p, { name: r.Process, pid: r.PID, path: path.get(String(r.PID)) }, shared.volFile.cmdline, 'command line');
+}
+
+/**
+ * Seven-view cross-view process listing, the way Volatility 2's psxview worked.
+ * Volatility 3's psxview only has four views (pslist, psscan, thrdscan, csrss);
+ * it drops session, deskthrd and pspcid. Sudo-Z fills those in from
+ * windows.sessionprocs and windows.pspcid (its own plugins) and windows.deskscan,
+ * then applies the rules Volatility 2 reached with -R / --apply-rules so that
+ * processes which are legitimately absent from a view are explained instead of
+ * flagged.
+ */
+const PSX_VIEWS = [
+  ['pslist', 'ActiveProcessLinks (what Task Manager walks)'],
+  ['psscan', 'pool scan for EPROCESS objects'],
+  ['thrdscan', 'pool scan for ETHREAD, mapped back to its process'],
+  ['csrss', 'handle table of csrss.exe'],
+  ['pspcid', 'PspCidTable, the kernel object table of every PID'],
+  ['session', 'session space process lists'],
+  ['deskthrd', 'threads attached to a desktop'],
+];
+// Volatility 2 -R rules: a view that cannot see a process for a structural reason.
+function expectedAbsences(name, pid, ppid, sessionId) {
+  const n = String(name || '').toLowerCase();
+  const out = new Map();
+  const no = (view, why) => out.set(view, why);
+  if (n === 'system' || pid === 4) { no('csrss', 'the System process starts before csrss.exe'); no('session', 'the System process belongs to no session'); no('deskthrd', 'the System process owns no desktop threads'); }
+  if (n === 'smss.exe') { no('csrss', 'smss.exe starts csrss.exe, so csrss never holds a handle to it'); no('session', 'the master smss.exe runs before any session exists'); no('deskthrd', 'smss.exe owns no desktop threads'); }
+  if (n === 'csrss.exe') no('csrss', 'csrss.exe does not hold a handle to itself');
+  if (n === 'wininit.exe' || n === 'services.exe' || n === 'lsass.exe' || n === 'lsaiso.exe' || n === 'memcompression' || n === 'registry' || n === 'secure system') no('deskthrd', 'session 0 service process with no desktop threads');
+  if (sessionId === 0) no('deskthrd', 'session 0 processes normally own no desktop threads');
+  return out;
+}
+
+export function crossView(v, shared, ctx) {
+  const px = v.psxview || [];
+  if (!px.length && !v.pspcid && !v.sessionprocs && !v.deskscan) return;
+  const rows = new Map(); // pid|name -> row
+  const key = (pid, name) => `${pid}|${String(name || '').toLowerCase()}`;
+  const get = (pid, name, offset) => {
+    const k = key(pid, name);
+    let r = rows.get(k);
+    if (!r) { r = { pid: Number(pid), name: String(name || ''), offset: offset ?? '', views: {}, exit: '', session: null, ppid: null }; rows.set(k, r); }
+    if (!r.offset && offset) r.offset = offset;
+    return r;
+  };
+  for (const p of px) {
+    const r = get(p.PID, p.Name, p['Offset(V)'] ?? p['Offset(P)']);
+    for (const c of ['pslist', 'psscan', 'thrdscan', 'csrss']) r.views[c] = !!p[c];
+    if (p['Exit Time']) r.exit = String(p['Exit Time']);
+  }
+  // the four Volatility 3 views can also be rebuilt from the plugins themselves when psxview was not run
+  if (!px.length) {
+    for (const [plug, view] of [['pslist', 'pslist'], ['psscan', 'psscan']]) for (const p of v[plug] || []) { const r = get(p.PID, p.ImageFileName, p['Offset(V)'] ?? p.Offset); r.views[view] = true; if (p.ExitTime) r.exit = String(p.ExitTime); }
+  }
+  for (const p of v.pspcid || []) { const r = get(p.PID, p.Name, p['Offset(V)']); r.views.pspcid = true; r.ppid = p.PPID ?? r.ppid; if (p.ExitTime) r.exit = r.exit || String(p.ExitTime); }
+  for (const p of v.sessionprocs || []) { const r = get(p.PID, p.Name, p['Offset(V)']); r.views.session = true; if (p.SessionId != null && p.SessionId >= 0) r.session = Number(p.SessionId); if (p.ExitTime) r.exit = r.exit || String(p.ExitTime); }
+  for (const p of v.deskscan || []) { const r = get(p.PID, p.Process || p['Process Name']); r.views.deskthrd = true; const sid = p['Session ID'] ?? p.SessionId; if (sid != null && r.session == null) r.session = Number(sid); }
+  if (!rows.size) return;
+
+  // which views actually ran: a view that was never collected is blank, not "missing"
+  const ran = new Set();
+  if (px.length) for (const c of ['pslist', 'psscan', 'thrdscan', 'csrss']) ran.add(c);
+  else { if (v.pslist) ran.add('pslist'); if (v.psscan) ran.add('psscan'); }
+  if (v.pspcid) ran.add('pspcid');
+  if (v.sessionprocs) ran.add('session');
+  if (v.deskscan) ran.add('deskthrd');
+
+  const file = shared.volFile.psxview || shared.volFile.pspcid || shared.volFile.sessionprocs || shared.volFile.deskscan || '';
+  const out = [];
+  for (const r of [...rows.values()].sort((a, b) => a.pid - b.pid)) {
+    const exp = expectedAbsences(r.name, r.pid, r.ppid, r.session);
+    const missing = [...ran].filter((c) => !r.views[c]);
+    const unexplained = missing.filter((c) => !exp.has(c) && !(r.exit && c !== 'psscan'));
+    const seen = [...ran].filter((c) => r.views[c]);
+    const notes = [];
+    if (r.exit) notes.push(`exited ${r.exit}: only pool scans still see it`);
+    for (const c of missing) if (exp.has(c)) notes.push(`${c}: ${exp.get(c)}`);
+    out.push([r.name, r.pid, ...PSX_VIEWS.map(([c]) => (!ran.has(c) ? '' : r.views[c] ? 'Y' : exp.has(c) || (r.exit && c !== 'psscan') ? 'n/a' : 'NO')), r.exit, notes.join('; ')]);
+
+    if (r.views.pslist || !unexplained.includes('pslist')) continue;
+    const corroborating = seen.filter((c) => c !== 'pslist');
+    if (!corroborating.length) continue;
+    const kernelOwned = corroborating.filter((c) => c === 'pspcid' || c === 'csrss' || c === 'session');
+    const sev = kernelOwned.length ? 'critical' : corroborating.length >= 2 ? 'critical' : 'high';
+    ctx.finding({
+      sev, category: 'Defense Evasion', tool: 'Volatility 3', file,
+      title: `Memory: process unlinked from the active process list (DKOM): ${r.name} (PID ${r.pid})`,
+      detail: `Missing from ActiveProcessLinks, which Task Manager, tasklist and pslist all walk, but still present in ${corroborating.length} independent view(s): ${corroborating.join(', ')}.${kernelOwned.length ? ` ${kernelOwned.join(' and ')} ${kernelOwned.length > 1 ? 'are structures' : 'is a structure'} the kernel needs to keep working, so an entry there with no process-list entry is deliberate hiding rather than a stale pool object.` : ''} The process had not exited, so its absence is not explained by termination.`,
+      evidence: PSX_VIEWS.filter(([c]) => ran.has(c)).map(([c, what]) => `${c.padEnd(9)} ${r.views[c] ? 'found' : exp.has(c) ? 'not expected (' + exp.get(c) + ')' : 'MISSING'}   ${what}`).join('\n'),
+      mitre: ['T1014', 'T1564'],
+    });
+  }
+  const blank = PSX_VIEWS.filter(([c]) => !ran.has(c)).map(([c]) => c);
+  shared.volTables = shared.volTables || [];
+  shared.volTables.push({
+    title: 'Cross-view process listing (7 views)',
+    columns: ['Name', 'PID', ...PSX_VIEWS.map(([c]) => c), 'ExitTime', 'Why a view is blank'],
+    rows: out,
+    note: `Y = seen, NO = missing with no structural reason, n/a = not expected in that view, empty = the view was not collected.${blank.length ? ` Not collected here: ${blank.join(', ')}.` : ''} pslist is the list rootkits unlink from; every other column is an independent way of finding the same process.`,
+  });
 }
