@@ -1,0 +1,5 @@
+[
+{"CPU":0,"Vector":46,"Meaning":"legacy system call gate","Handler":4208722192,"Module":"rk_drv","Symbol":"N/A","Owner":"other module"},
+{"CPU":0,"Vector":1,"Meaning":"debug / single step","Handler":4293918720,"Module":null,"Symbol":"N/A","Owner":"unknown memory"},
+{"CPU":1,"Vector":46,"Meaning":"legacy system call gate","Handler":4206000000,"Module":"ntoskrnl","Symbol":"KiSystemService","Owner":"kernel"}
+]

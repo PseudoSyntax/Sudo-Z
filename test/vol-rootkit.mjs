@@ -53,4 +53,22 @@ ok(hidden && /PspCidTable|pspcid/.test(hidden.detail), 'finding explains why a k
 const once = rep.findings.filter((f) => /rk_agent\.exe/.test(f.title) && /DKOM|unlinked/.test(f.title));
 ok(once.length === 1, `hidden process reported once, not duplicated by the pslist/psscan check (got ${once.length})`);
 
+// ---------------------------------------------------------------- IDT and API hooks (no Volatility 3 equivalent)
+const tt = rep.findings.map((f) => `${f.sev} ${f.title}`);
+const hit = (rx, m) => ok(tt.some((x) => rx.test(x)), m);
+hit(/critical .*1 interrupt handler\(s\) point into memory that belongs to no module/, 'IDT: handler in unmapped memory is critical');
+hit(/high .*1 interrupt handler\(s\) owned by rk_drv rather than the kernel/, 'IDT: third-party driver holding a vector');
+hit(/critical .*1 interrupt vector\(s\) have a different handler on different processors/, 'IDT: per CPU mismatch (single core hook)');
+hit(/critical .*3 API hooks in explorer\.exe \(PID 1500\) point into memory that belongs to no module/, 'apihooks: inline hooks grouped per process');
+hit(/critical .*1 import table entry in explorer\.exe \(PID 1500\) point into memory that belongs to no module/, 'apihooks: IAT hooks reported as their own group');
+hit(/medium .*1 API hooks in svchost\.exe \(PID 900\) redirected into edrsensor\.dll/, 'apihooks: a named module is medium, not critical');
+ok(!tt.some((x) => /svchost\.exe.*critical/.test(x)), 'apihooks: EDR style hook is not raised to critical');
+const idtT = rep.files.flatMap((f) => f.tables || []).find((x) => x.title === 'Interrupt Descriptor Table');
+ok(idtT && idtT.rows.length === 3, 'IDT table rendered');
+const ahT = rep.files.flatMap((f) => f.tables || []).find((x) => x.title === 'User mode API hooks');
+ok(ahT && ahT.rows.length === 5 && ahT.columns.includes('Destination owner'), 'API hook table rendered');
+const amsi = rep.findings.find((f) => /point into memory that belongs to no module/.test(f.title) && /explorer/.test(f.title));
+ok(amsi && /AmsiScanBuffer/.test(amsi.evidence) && /ws2_32/.test(amsi.evidence) === false, 'inline and iat hooks are reported separately');
+ok(amsi && /vadinfo|vaddump/.test(amsi.detail), 'finding says how to dump the injected code');
+
 process.exit(fail ? 1 : 0);

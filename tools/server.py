@@ -44,6 +44,8 @@ VOL_PLUGINS = [
     ['windows.pspcid'], ['windows.sessionprocs'], ['windows.deskscan'],
     # service list cross-view and device stacking (filter-driver rootkits)
     ['windows.malware.svcdiff', 'windows.svcdiff'], ['windows.devicetree'],
+    # the two Volatility 2 plugins that were never ported (Sudo-Z's own)
+    ['windows.idt'], ['windows.apihooks'],
 ]
 # plugins that only exist in newer Volatility 3 releases; a missing one is reported, not an error
 VOL_OPTIONAL = {'windows.deskscan', 'windows.devicetree', 'windows.malware.svcdiff', 'windows.svcdiff'}

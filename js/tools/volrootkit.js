@@ -99,3 +99,50 @@ export function rootkitFinal(v, shared, ctx) {
   }
   // threads: pool scan vs process thread lists via psxview's thrdscan column is handled per process; orphaned kernel threads per plugin
 }
+
+/** windows.idt and windows.apihooks (Sudo-Z's Volatility plugins; Volatility 3 ships neither). */
+export function hookPlugin(key, rows, note, tables) {
+  switch (key) {
+    case 'idt': {
+      const byVector = new Map();
+      for (const r of rows) { const k = String(r.Vector); if (!byVector.has(k)) byVector.set(k, new Map()); byVector.get(k).set(String(r.Handler), r); }
+      const unknown = rows.filter((r) => /unknown memory/i.test(r.Owner || ''));
+      const other = rows.filter((r) => /other module/i.test(r.Owner || ''));
+      const label = (r) => `vector ${r.Vector}${r.Meaning ? ` (${r.Meaning})` : ''} on CPU ${r.CPU} -> ${hex(r.Handler)} ${r.Module || 'no module'}${r.Symbol && r.Symbol !== 'N/A' ? '!' + r.Symbol : ''}`;
+      if (unknown.length) note('critical', `${unknown.length} interrupt handler(s) point into memory that belongs to no module`, 'Every IDT entry should land in ntoskrnl or hal. A handler in unmapped or private memory is an interrupt hook: int 0x2e is the legacy system call gate, int 1 and 3 are used for anti-debugging, and int 0x0e (page fault) is how Shadow Walker style rootkits hide memory.', unknown.slice(0, 40).map(label).join('\n'), ['T1014', 'T1562.001'], 'Defense Evasion');
+      if (other.length) {
+        const mods = [...new Set(other.map((r) => r.Module))];
+        note('high', `${other.length} interrupt handler(s) owned by ${mods.join(', ')} rather than the kernel`, 'A third-party driver holding an interrupt vector is unusual outside virtualisation and some hardware drivers. Confirm the driver and its signature.', other.slice(0, 40).map(label).join('\n'), ['T1014'], 'Defense Evasion');
+      }
+      const split = [...byVector].filter(([, h]) => h.size > 1);
+      if (split.length) note('critical', `${split.length} interrupt vector(s) have a different handler on different processors`, 'The IDT is per CPU. A rootkit that hooks only one core stays hidden from a tool that reads a single processor, and the mismatch itself is proof of tampering.', split.slice(0, 20).map(([v, h]) => `vector ${v}: ` + [...h.values()].map((r) => `CPU ${r.CPU} ${hex(r.Handler)} ${r.Module || 'unknown'}`).join(' | ')).join('\n'), ['T1014'], 'Defense Evasion');
+      tables.push(T('Interrupt Descriptor Table', ['CPU', 'Vector', 'Meaning', 'Handler', 'Module', 'Symbol', 'Owner'], rows.map((r) => [r.CPU, r.Vector, r.Meaning, hex(r.Handler), r.Module, r.Symbol, r.Owner]), 'By default only vectors outside the kernel are listed, so an empty table is the healthy result.'));
+      return true;
+    }
+    case 'apihooks': {
+      const groups = new Map();
+      for (const r of rows) {
+        const owner = String(r['Destination owner'] || '');
+        const k = `${r.PID}|${r.Process}|${owner}|${r.Type}`;
+        if (!groups.has(k)) groups.set(k, { pid: r.PID, proc: r.Process, owner, type: r.Type, list: [] });
+        groups.get(k).list.push(r);
+      }
+      for (const g of groups.values()) {
+        const injected = /unknown memory/i.test(g.owner);
+        const mods = [...new Set(g.list.map((r) => r.Module))];
+        const fns = g.list.slice(0, 25).map((r) => `${r.Module}!${r.Function} ${hex(r['Hooked at'])} -> ${hex(r.Destination)} (${r.How})`);
+        note(injected ? 'critical' : 'medium',
+          injected
+            ? `${g.list.length} ${g.type === 'iat' ? 'import table entr' : 'API hook'}${g.type === 'iat' ? (g.list.length > 1 ? 'ies' : 'y') : g.list.length > 1 ? 's' : ''} in ${g.proc} (PID ${g.pid}) point into memory that belongs to no module`
+            : `${g.list.length} ${g.type === 'iat' ? 'import table entries' : 'API hooks'} in ${g.proc} (PID ${g.pid}) redirected into ${g.owner}`,
+          injected
+            ? `The ${g.type === 'iat' ? 'import address table entries' : 'first instructions of these exported functions'} in ${mods.join(', ')} jump into private memory. That is injected code deciding what the process sees: credential theft, AMSI and ETW bypasses, and hiding files and processes from the program itself all work this way. Dump the destination with windows.vadinfo and windows.vaddump.`
+            : `${g.owner} has redirected these functions. Endpoint security, application compatibility shims and some DRM hook this way, so confirm the module is one you expect before treating it as malicious.`,
+          fns.join('\n'), injected ? ['T1055', 'T1562.001', 'T1574'] : ['T1574'], 'Defense Evasion');
+      }
+      tables.push(T('User mode API hooks', ['PID', 'Process', 'Module', 'Function', 'Type', 'Hooked at', 'Destination', 'Destination owner', 'How'], rows.map((r) => [r.PID, r.Process, r.Module, r.Function, r.Type, hex(r['Hooked at']), hex(r.Destination), r['Destination owner'], r.How]), 'inline = the function prologue was overwritten; iat = an import points somewhere unexpected. Forwarded exports and jumps inside the same module are not reported.'));
+      return true;
+    }
+    default: return false;
+  }
+}

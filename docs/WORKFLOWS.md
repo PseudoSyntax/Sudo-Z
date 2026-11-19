@@ -26,7 +26,7 @@ flowchart TD
 |---|---|---|
 | Single files, folders, zips (KAPE, Velociraptor, any layout) | Unpacked in memory, nested zips too; original Windows path recovered from the collection layout | [1] |
 | Disk images: raw/dd, split, E01, VHD, VHDX, QCOW2 | Read lazily (never fully loaded), MBR/GPT volumes found, BitLocker detected, NTFS read only, KAPE style targets extracted with their $SI times | [6] |
-| Memory images (home install) | Volatility 3 run in the background with 42 plugins (three are Sudo-Z's own), results auto-loaded | [5] |
+| Memory images (home install) | Volatility 3 run in the background with 44 plugins (five are Sudo-Z's own), results auto-loaded | [5] |
 | Volatility 3 JSON | Parsed in the browser | [7] |
 | EZ tool, KAPE module, Autoruns, Sigcheck, Hayabusa CSVs | Recognised by header and graded like the native artifact | [8] |
 | Office documents and PDFs | Metadata, macros, links and actions read; also string scanned | [9] |
@@ -102,7 +102,7 @@ When positive:
 
 ### 2.9 Memory (Volatility 3)
 
-Detects: hidden processes (psscan versus pslist, DKOM unlink), name versus command line mismatches, malfind, hollowing, process ghosting, PEB masquerading, unbacked threads, direct, indirect and unhooked syscalls, ETW patching, Skeleton Key. LSASS and other key processes are checked for unexpected mapped paths (a MappedPath of N/A where a file is expected). Rootkit checks cover SSDT hooks from both the global table and per-thread KTHREAD tables (Sudo-Z's own plugin), driver and module cross views, callbacks, IRP hooks, timers, orphan kernel threads, the service list cross-view and the device tree. Hidden processes are judged on seven cross-views: Volatility 3's psxview gives four (pslist, psscan, thrdscan, csrss) and Sudo-Z adds PspCidTable, session process lists and desktop threads, with Volatility 2's `-R` rules built in so System, smss.exe, csrss.exe and exited processes are explained rather than flagged. Named pipes are checked against known tool pipes, random names and Potato style impersonation [7, 20, 21, 22].
+Detects: hidden processes (psscan versus pslist, DKOM unlink), name versus command line mismatches, malfind, hollowing, process ghosting, PEB masquerading, unbacked threads, direct, indirect and unhooked syscalls, ETW patching, Skeleton Key. LSASS and other key processes are checked for unexpected mapped paths (a MappedPath of N/A where a file is expected). Rootkit checks cover SSDT hooks from both the global table and per-thread KTHREAD tables (Sudo-Z's own plugin), driver and module cross views, callbacks, IRP hooks, timers, orphan kernel threads, the service list cross-view and the device tree. Volatility 2's `apihooks` and `idt` were never ported to Volatility 3, so Sudo-Z ships its own: inline and import table hooks on exported functions, and every processor's Interrupt Descriptor Table. Hidden processes are judged on seven cross-views: Volatility 3's psxview gives four (pslist, psscan, thrdscan, csrss) and Sudo-Z adds PspCidTable, session process lists and desktop threads, with Volatility 2's `-R` rules built in so System, smss.exe, csrss.exe and exited processes are explained rather than flagged. Named pipes are checked against known tool pipes, random names and Potato style impersonation [7, 20, 21, 22].
 
 When positive:
 * **Automatic:** when two or more independent plugins flag the same PID, an injection finding is raised to critical: **code injection confirmed by N plugins**. Process and network results feed the execution list, indicators and the timeline, so they join the disk evidence in leads [20].
@@ -173,7 +173,7 @@ Each lead carries its evidence, entities to pivot on and a Next line [11].
 18. `js/tools/binaries.js`, `js/parsers/pe.js`, `js/ioc/baseline.js`, `js/ioc/heuristics.js`
 19. `js/tools/ese.js`, `js/tools/artifacts.js` (SQLite browsers)
 20. `js/tools/volinject.js`
-21. `js/tools/volrootkit.js`, `js/tools/volatility.js` crossView(), `tools/volplugins/windows/` (kthread_ssdt.py, pspcid.py, sessionprocs.py)
+21. `js/tools/volrootkit.js`, `js/tools/volatility.js` crossView(), `tools/volplugins/windows/` (kthread_ssdt.py, pspcid.py, sessionprocs.py, idt.py, apihooks.py)
 22. `js/ioc/pipes.js`
 23. `js/core/bsearch.js`
 24. `js/report.js`
