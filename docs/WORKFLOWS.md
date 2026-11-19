@@ -184,5 +184,5 @@ Each lead carries its evidence, entities to pivot on and a Next line [11].
 21. `js/tools/volrootkit.js`, `js/tools/volatility.js` crossView(), `tools/volplugins/windows/` (kthread_ssdt.py, pspcid.py, sessionprocs.py, idt.py, apihooks.py)
 22. `js/ioc/pipes.js`
 23. `js/core/bsearch.js`, `js/core/strings.js`, `js/ioc/shellcode.js`
-24. `js/report.js`
+24. `js/report.js`, `js/ioc/ports.js`
 25. `js/tools/memprocfs.js`, `tools/mpfs_run.py`

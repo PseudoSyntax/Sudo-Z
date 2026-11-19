@@ -61,6 +61,8 @@ jobs:
           curl -fsS -H 'X-Sudo-Z: 1' http://localhost:8793/api/jobs | grep -q '^\['
       - name: Execution evidence (Prefetch, ShimCache, Amcache, UserAssist, SRUM)
         run: node test/execution.mjs
+      - name: Suspicious ports (context, sweeps and scans)
+        run: node test/ports.mjs
       - name: VirusTotal lookups (click to send, verdicts, no automatic calls)
         run: node test/vt.mjs
       - name: malfind region identification (Meterpreter and friends)
