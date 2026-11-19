@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="260" viewBox="0 0 880 260" role="img" aria-label="Sudo-Z">
+  <rect width="880" height="260" fill="#0b0e0c"/>
+  <g stroke="#141a16" stroke-width="1">
+    <path d="M0 40.5h880M0 220.5h880" opacity=".9"/>
+  </g>
+  <g transform="translate(74,74)">
+    <rect x="-16" y="-16" width="144" height="144" fill="none" stroke="#1d2420"/>
+    <path d="M0 0h18M-16 -16v18M112 0h-18M128 -16v18M0 112h18M-16 128v-18M112 112h-18M128 128v-18" stroke="#ffb000" stroke-width="2" fill="none"/>
+    <g transform="scale(7)"><path d="M3 4h10L3 12h10" stroke="#ffb000" stroke-width="2" fill="none"/></g>
+  </g>
+  <text x="250" y="118" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="62" font-weight="700" letter-spacing="4" fill="#ffb000">SUDO-Z</text>
+  <text x="252" y="152" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="17" letter-spacing="1.5" fill="#cfe0d5">DFIR console in the browser</text>
+  <text x="252" y="180" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="14" fill="#8a9a8f">Eric Zimmerman tooling, Volatility 3, MemProcFS and KAPE, reimplemented</text>
+  <text x="252" y="200" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="14" fill="#8a9a8f">in JavaScript. No upload, no install, nothing leaves the machine.</text>
+</svg>

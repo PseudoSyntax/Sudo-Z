@@ -61,6 +61,10 @@ jobs:
           curl -fsS -H 'X-Sudo-Z: 1' http://localhost:8793/api/jobs | grep -q '^\['
       - name: Execution evidence (Prefetch, ShimCache, Amcache, UserAssist, SRUM)
         run: node test/execution.mjs
+      - name: malfind region identification (Meterpreter and friends)
+        run: node test/malfind.mjs
+      - name: Universal grep across files (premade patterns, output modes)
+        run: node test/grep.mjs
       - name: MemProcFS forensic CSVs (FindEvil grading)
         run: node test/memprocfs.mjs
       - name: MACB file times (MFT rules, document / PE / LNK / zip times)

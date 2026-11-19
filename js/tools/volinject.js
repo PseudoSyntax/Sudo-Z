@@ -5,6 +5,7 @@
 // MappedPath is N/A (nothing on disk behind it).
 import { baseName } from '../ioc/heuristics.js';
 import { wrongLocation } from '../ioc/baseline.js';
+import { classifyShellcode } from '../ioc/shellcode.js';
 
 // processes where any injected code is serious: credential stores, session and service managers
 export const SENSITIVE = /^(lsass|lsaiso|csrss|winlogon|wininit|services|smss|spoolsv|svchost|explorer|dwm|taskhostw|sihost|searchindexer|msmpeng)\.exe$/i;
@@ -91,8 +92,10 @@ export function injectionChecks(v, shared, ctx) {
     const proc = String(regs[0].Process || '');
     const hex = (r) => String(r.Hexdump || '').toLowerCase().replace(/[^0-9a-f ]/g, ' ');
     const erased = regs.filter((r) => !/^\s*4d 5a/.test(hex(r)) && /50 45 00 00/.test(hex(r)));
-    if (erased.length) { add('critical', `${proc} (PID ${pid}): PE image with its MZ header wiped in private memory`, 'A "PE\\0\\0" signature without the MZ in front is a reflectively loaded DLL that erased its header to avoid scanners.', erased.map((r) => `${r['Start VPN']} ${r.Protection}\n${String(r.Hexdump || '').slice(0, 200)}`).join('\n'), ['T1620', 'T1027'], mf, pid, proc); mark(pid, 'erased PE header'); }
-    if (CRED.test(proc) || (SENSITIVE.test(proc) && !JIT.test(proc))) { add(CRED.test(proc) ? 'critical' : 'high', `${proc} (PID ${pid}) has ${regs.length} private executable region(s) (malfind)`, 'This process has no reason to hold executable private memory. Expect injected code.', regs.slice(0, 10).map((r) => `${r['Start VPN']}-${r['End VPN']} ${r.Protection} ${r.Tag || ''}`).join('\n'), ['T1055', ...(CRED.test(proc) ? ['T1003.001'] : [])], mf, pid, proc); mark(pid, 'malfind region'); }
+    if (erased.length && !regs.some((r) => { const c = classifyShellcode(r.Hexdump || r.Disasm || ''); return c && c.id === 'pe_no_mz'; })) { add('critical', `${proc} (PID ${pid}): PE image with its MZ header wiped in private memory`, 'A "PE\\0\\0" signature without the MZ in front is a reflectively loaded DLL that erased its header to avoid scanners.', erased.map((r) => `${r['Start VPN']} ${r.Protection}\n${String(r.Hexdump || '').slice(0, 200)}`).join('\n'), ['T1620', 'T1027'], mf, pid, proc); mark(pid, 'erased PE header'); }
+    // when a region's opening bytes already named the implant, that finding says more than this one
+    const named = regs.some((r) => { const c = classifyShellcode(r.Hexdump || r.Disasm || ''); return c && !c.benign; });
+    if (!named && (CRED.test(proc) || (SENSITIVE.test(proc) && !JIT.test(proc)))) { add(CRED.test(proc) ? 'critical' : 'high', `${proc} (PID ${pid}) has ${regs.length} private executable region(s) (malfind)`, 'This process has no reason to hold executable private memory. Expect injected code.', regs.slice(0, 10).map((r) => `${r['Start VPN']}-${r['End VPN']} ${r.Protection} ${r.Tag || ''}`).join('\n'), ['T1055', ...(CRED.test(proc) ? ['T1003.001'] : [])], mf, pid, proc); mark(pid, 'malfind region'); }
     else mark(pid, 'malfind region');
   }
 

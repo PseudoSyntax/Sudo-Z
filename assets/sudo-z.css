@@ -72,7 +72,10 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .progress { margin-top: 10px; }
 .pbar { height: 6px; border: 1px solid var(--line2); }
 .pfill { height: 100%; width: 0; background: var(--amber); transition: width .15s; }
-.plabel { color: var(--dim); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pnums { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-top: 4px; }
+.ppct { color: var(--amber); font-variant-numeric: tabular-nums; font-weight: 700; }
+.peta { color: var(--dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.plabel { color: var(--dim); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .accept { width: calc(100% - 20px); border-collapse: collapse; margin-top: 6px; font-size: 11px; }
 .accept td { padding: 2px 0; border-bottom: 1px dotted var(--line); }
 .accept td:last-child { color: var(--dim); text-align: right; }
