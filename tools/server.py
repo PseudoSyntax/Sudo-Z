@@ -40,7 +40,13 @@ VOL_PLUGINS = [
     # kernel rootkits: syscall tables (global and per-thread), DKOM cross-views, callbacks, IRP and timer hooks
     ['windows.ssdt'], ['windows.kthread_ssdt'], ['windows.modules'], ['windows.modscan'], ['windows.driverscan'], ['windows.unloadedmodules'],
     ['windows.callbacks'], ['windows.driverirp'], ['windows.timers'], ['windows.orphan_kernel_threads'],
+    # psxview cross-views Volatility 3 does not ship: PspCidTable, session process lists, desktop threads
+    ['windows.pspcid'], ['windows.sessionprocs'], ['windows.deskscan'],
+    # service list cross-view and device stacking (filter-driver rootkits)
+    ['windows.malware.svcdiff', 'windows.svcdiff'], ['windows.devicetree'],
 ]
+# plugins that only exist in newer Volatility 3 releases; a missing one is reported, not an error
+VOL_OPTIONAL = {'windows.deskscan', 'windows.devicetree', 'windows.malware.svcdiff', 'windows.svcdiff'}
 # Sudo-Z's own Volatility plugins (windows.kthread_ssdt)
 VOL_EXTRA = APP / 'tools' / 'volplugins'
 

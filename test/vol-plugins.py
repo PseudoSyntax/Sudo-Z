@@ -4,7 +4,10 @@ usage: python test/vol-plugins.py <path-to-vol> [server.py]"""
 import ast, re, subprocess, sys
 vol = sys.argv[1]
 srv = sys.argv[2] if len(sys.argv) > 2 else 'tools/server.py'
-groups = ast.literal_eval(re.search(r'VOL_PLUGINS = (\[.*?\n\])', open(srv).read(), re.S).group(1))
+src = open(srv).read()
+groups = ast.literal_eval(re.search(r'VOL_PLUGINS = (\[.*?\n\])', src, re.S).group(1))
+m = re.search(r'VOL_OPTIONAL = (\{.*?\})', src, re.S)
+optional = ast.literal_eval(m.group(1)) if m else set()
 out = subprocess.run([vol, '-p', 'tools/volplugins', '-h'], capture_output=True, text=True).stdout
 names = set(re.findall(r'^\s+((?:windows|linux|mac)\.[A-Za-z0-9_.]+)', out, re.M))
 ver = re.search(r'Framework ([\d.]+)', out)
@@ -13,6 +16,7 @@ print('  windows plugins: ' + ' '.join(sorted(n for n in names if n.startswith('
 bad = 0
 for alts in groups:
     hit = next((a for a in alts if any(n == a or n.startswith(a + '.') for n in names)), None)
-    print(f'  {"ok " if hit else "MISSING"} {hit or " / ".join(alts)}')
-    bad += hit is None
+    opt = any(a in optional for a in alts)
+    print(f'  {"ok " if hit else ("optional, not in this version " if opt else "MISSING")} {hit or " / ".join(alts)}')
+    bad += hit is None and not opt
 sys.exit(1 if bad else 0)
