@@ -297,3 +297,38 @@ table.prog td.unsigned, table.prog td.invalid { color: var(--high); } table.prog
 
 table.exec td.ok { color: var(--green); } table.exec td.bad { color: var(--high); } table.exec td.warn, table.exec .warn { color: var(--amber); }
 table.exec td:nth-child(-n+4), table.exec th { white-space: nowrap; }
+
+/* ---------------------------------------------------------------- VirusTotal, click to send */
+.vt { font: inherit; font-size: 11px; padding: 1px 7px; border: 1px solid var(--line2); background: transparent; color: var(--dim); cursor: pointer; white-space: nowrap; }
+.vt:hover { border-color: var(--amber); color: var(--amber); }
+.vt.vt-critical { border-color: #ff4d4d; color: #ff6b6b; }
+.vt.vt-high { border-color: #ff8c42; color: #ff9f5a; }
+.vt.vt-medium { border-color: var(--amber); color: var(--amber); }
+.vt.vt-low { border-color: #3f7d55; color: #6fbf87; }
+.vt.vt-none, .vt.vt-err { border-color: var(--line2); color: var(--dim); font-style: italic; }
+.vtpanel { position: fixed; z-index: 90; width: 460px; max-height: 70vh; overflow: auto; background: var(--panel, #0b0e0c); border: 1px solid var(--amber); box-shadow: 0 10px 40px #000a; }
+.vth { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--line2); background: #11161300; }
+.vth b { color: var(--amber); word-break: break-all; font-size: 12px; }
+.vtx { background: none; border: 0; color: var(--dim); font-size: 18px; line-height: 1; cursor: pointer; }
+.vtx:hover { color: var(--amber); }
+.vtbody { padding: 10px; }
+.vtbody p { margin: 0 0 8px; }
+.vtbody p.bad { color: #ff6b6b; }
+.vtverdict { padding: 5px 9px; margin-bottom: 9px; border-left: 3px solid var(--line2); font-weight: 700; }
+.vtverdict.critical { border-color: #ff4d4d; color: #ff6b6b; }
+.vtverdict.high { border-color: #ff8c42; color: #ff9f5a; }
+.vtverdict.medium { border-color: var(--amber); color: var(--amber); }
+.vtverdict.low { border-color: #3f7d55; color: #6fbf87; }
+.vtverdict.info { color: var(--dim); }
+table.vtt { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+table.vtt td { padding: 2px 6px 2px 0; vertical-align: top; border-bottom: 1px solid #ffffff08; }
+table.vtt td:first-child { color: var(--dim); white-space: nowrap; width: 150px; }
+table.vtt td.mono { word-break: break-all; }
+.vtsec { color: var(--amber); font-size: 11px; letter-spacing: 1px; margin: 10px 0 4px; }
+.vteng { color: var(--dim); line-height: 1.5; }
+.vtvia { margin-top: 10px; font-size: 11px; }
+.vtkey { display: flex; gap: 6px; margin-top: 10px; }
+.vtkey input { flex: 1; min-width: 0; }
+.vtfoot { padding: 8px 10px; border-top: 1px solid var(--line2); color: var(--dim); font-size: 11px; }
+.vtfoot a { color: var(--amber); }
+.hashes .vt { margin-left: 4px; }

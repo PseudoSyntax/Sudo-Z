@@ -195,8 +195,23 @@ export function runUsn(u8, f, ctx, shared) {
   const out = [];
   const renamedTo = new Map(); let deletes = 0;
   const flagged = [];
+  // per entry: what the journal saw and when. The journal is append only, so it survives a
+  // timestamp edit and is the best witness against a stomped $SI. (MACB cross-check, js/ioc/macb.js)
+  const byEntry = shared.usn || (shared.usn = new Map());
   for (const r of rows) {
     const reason = usnReasons(r.reason);
+    if (byEntry.size < 400000) {
+      let e = byEntry.get(r.entry);
+      if (!e) { e = { first: r.time, last: r.time, data: '', create: '', basicOnly: '', name: r.name, reasons: 0 }; byEntry.set(r.entry, e); }
+      if (r.time && r.time < e.first) e.first = r.time;
+      if (r.time && r.time > e.last) e.last = r.time;
+      e.reasons |= r.reason;
+      if (r.name && /\.[a-z0-9]{1,8}$/i.test(r.name)) e.name = r.name;
+      if ((r.reason & 0x27) && (!e.data || r.time > e.data)) e.data = r.time;       // Data overwrite/extend/truncate
+      if ((r.reason & 0x100) && (!e.create || r.time < e.create)) e.create = r.time; // FileCreate
+      // BasicInfoChange on its own is what SetFileTime produces: no data, no rename, no security
+      if ((r.reason & 0x8000) && !(r.reason & 0x3737) && (!e.basicOnly || r.time > e.basicOnly)) e.basicOnly = r.time;
+    }
     out.push([r.time, r.name, reason, r.entry, r.seq, r.parent, mft ? pathOf(r) : '', r.usn]);
     if (r.reason & 0x200) deletes++;
     if (r.reason & 0x2000) { const ext = (r.name.match(/\.([^.]{2,12})$/) || [])[1]?.toLowerCase(); if (ext) renamedTo.set(ext, (renamedTo.get(ext) || 0) + 1); }
