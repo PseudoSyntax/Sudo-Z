@@ -142,6 +142,20 @@ def kape_targets(kp):
         return names[:200]
     except Exception: return []
 
+def mpfs_py():
+    """The interpreter that has the memprocfs package (the venv first, then this one)."""
+    venv = HOME / 'venv' / ('Scripts/python.exe' if IS_WIN else 'bin/python')
+    for py in ([str(venv)] if venv.exists() else []) + [sys.executable]:
+        try:
+            r = subprocess.run([py, '-c', 'import memprocfs,sys;print(getattr(memprocfs,"__version__","unknown"))'], capture_output=True, text=True, timeout=60)
+            if r.returncode == 0: return py, r.stdout.strip()[:20]
+        except Exception: continue
+    return None, None
+
+def mpfs_cap():
+    py, ver = mpfs_py()
+    return {'available': bool(py), 'version': ver, 'python': py}
+
 CAPS = {}
 def detect_caps():
     vc, vv = vol_cmd()
@@ -153,6 +167,7 @@ def detect_caps():
         'runs': str(RUNS),
         'kape': {'available': bool(kape_path()), 'path': kape_path(), 'windows': IS_WIN, 'admin': is_admin(), 'targets': kape_targets(kape_path()) if kape_path() else []},
         'images': True,
+        'memprocfs': mpfs_cap(),
     })
     CAPS['_volcmd'] = vc
 
@@ -195,6 +210,35 @@ def run_vol(job, image, plugins):
                 job['results'].append({'plugin': plugin, 'ok': False, 'error': str(e)}); ok = True; break
         if not ok: job['results'].append({'plugin': name, 'ok': False, 'error': 'plugin not available in this Volatility version'})
         job['done'] += 1
+    job['status'] = 'done'; job['current'] = ''; job['finished'] = time.time()
+
+def run_mpfs(job, image, opts):
+    py = CAPS['memprocfs']['python']
+    out = Path(job['dir'])
+    cmd = [py, str(APP / 'tools' / 'mpfs_run.py'), image, str(out), '--forensic', str(opts.get('forensic', 1))]
+    if opts.get('elastic'): cmd.append('--elastic-license')
+    if opts.get('yara'): cmd += ['--yara-rules', str(opts['yara'])]
+    jlog(job, 'MemProcFS forensic mode starting (this takes a while on a large image)')
+    try:
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        for line in p.stdout:
+            line = line.strip()
+            if not line: continue
+            try: msg = json.loads(line)
+            except ValueError: jlog(job, line[:300]); continue
+            if 'progress' in msg:
+                job['done'] = int(msg['progress']); job['total'] = 100; job['current'] = f"forensic analysis {msg['progress']}%"
+            elif msg.get('error'):
+                job['results'].append({'plugin': 'memprocfs', 'ok': False, 'error': msg['error']}); jlog(job, msg['error'])
+            elif msg.get('done'):
+                for n in msg.get('files', []): job['results'].append({'plugin': f'forensic/{n}', 'file': n, 'ok': True})
+                job['done'] = 100; job['total'] = 100
+        err = (p.stderr.read() or '').strip()
+        p.wait()
+        if p.returncode and not job['results']:
+            job['results'].append({'plugin': 'memprocfs', 'ok': False, 'error': err[-600:] or f'exit code {p.returncode}'})
+    except Exception as e:
+        job['results'].append({'plugin': 'memprocfs', 'ok': False, 'error': str(e)})
     job['status'] = 'done'; job['current'] = ''; job['finished'] = time.time()
 
 def ez_plan(root):
@@ -439,6 +483,14 @@ class Handler(SimpleHTTPRequestHandler):
             job = new_job('vol3', len(plugins)); job['image'] = img; job['source'] = img
             threading.Thread(target=run_vol, args=(job, img, plugins), daemon=True).start()
             return self.send_json(job)
+        if u.path == '/api/memprocfs/run':
+            img = os.path.expanduser(str(body.get('path', '')).strip().strip('"'))
+            if not os.path.isfile(img): return self.send_json({'error': f'image not found: {img}'}, 400)
+            if not CAPS['memprocfs']['available']: return self.send_json({'error': 'MemProcFS is not installed. Run: sudo-z setup memprocfs'}, 400)
+            job = new_job('memprocfs', 100); job['image'] = img; job['source'] = img
+            opts = {'forensic': body.get('forensic', 1), 'elastic': bool(body.get('elastic')), 'yara': body.get('yara', '')}
+            threading.Thread(target=run_mpfs, args=(job, img, opts), daemon=True).start()
+            return self.send_json(job)
         if u.path == '/api/ez/run':
             root = os.path.expanduser(str(body.get('path', '')).strip().strip('"'))
             if not os.path.isdir(root): return self.send_json({'error': f'folder not found: {root}'}, 400)
@@ -492,6 +544,8 @@ def main():
     v = CAPS['vol3']; e = CAPS['ez']
     print(f'[sudo-z] serving {APP}')
     print(f'[sudo-z] Volatility 3: {"v" + v["version"] if v["available"] else "not installed (sudo-z setup vol)"}')
+    m = CAPS['memprocfs']
+    print(f'[sudo-z] MemProcFS: {"v" + str(m["version"]) if m["available"] else "not installed (sudo-z setup memprocfs)"}')
     print(f'[sudo-z] EZ tools: {len(e["tools"])} found' + ('' if e['tools'] else ' (sudo-z setup ez)'))
     print(f'[sudo-z] open {url}   (Ctrl+C to stop)')
     if '--no-browser' not in sys.argv:

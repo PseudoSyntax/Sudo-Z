@@ -530,11 +530,12 @@ async function initLocal() {
 }
 const KAPE_DEFAULT_TARGETS = ['!SANS_Triage', 'KapeTriage', '!BasicCollection', 'EventLogs', 'RegistryHives', 'FileSystem'];
 function renderLocal() {
-  const c = LOCAL.caps; const v = c.vol3; const ez = c.ez; const k = c.kape || { windows: false };
+  const c = LOCAL.caps; const v = c.vol3; const ez = c.ez; const k = c.kape || { windows: false }; const mp = c.memprocfs || { available: false };
   const targets = [...new Set([...KAPE_DEFAULT_TARGETS, ...(k.targets || [])])];
   const kOk = k.windows && k.available;
   $('#local').innerHTML = `<div class="localbox"><div class="ph"><span class="code">00B</span> LOCAL ENGINE</div><div class="lb">
     <div class="cap"><span>Volatility 3</span><span class="${v.available ? 'ok' : 'no'}">${v.available ? 'v' + esc(v.version) : 'not installed'}</span></div>
+    <div class="cap"><span>MemProcFS</span><span class="${mp.available ? 'ok' : 'no'}">${mp.available ? esc(String(mp.version || 'installed')) : 'not installed'}</span></div>
     <div class="cap"><span>Original EZ tools</span><span class="${ez.tools.length ? 'ok' : 'no'}">${ez.tools.length ? ez.tools.length + ' found' : 'not installed'}</span></div>
     <div class="cap"><span>KAPE</span><span class="${kOk ? 'ok' : 'no'}">${!k.windows ? 'Windows only' : k.available ? (k.admin ? 'ready (admin)' : 'ready (asks for admin)') : 'not found'}</span></div>
     <div class="cap"><span>Disk images</span><span class="ok">E01 VHD VHDX raw QCOW2</span></div>
@@ -556,6 +557,9 @@ function renderLocal() {
     <input type="text" id="memPath" placeholder="memory image path, e.g. D:\\case\\mem.raw" ${v.available ? '' : 'disabled'}>
     <button class="btn" id="runVol" ${v.available ? '' : 'disabled'}>RUN VOLATILITY 3</button>
     ${v.available ? '' : '<div class="hint">Install: <code>sudo-z setup vol</code>, then restart sudo-z.</div>'}
+    <button class="btn" id="runMpfs" ${mp.available ? '' : 'disabled'}>RUN MEMPROCFS FORENSIC MODE</button>
+    <label class="chk"><input type="checkbox" id="mpfsElastic" ${mp.available ? '' : 'disabled'}> run FindEvil's built-in YARA rules (accepts the Elastic License 2.0)</label>
+    <div class="hint">${mp.available ? 'A second engine over the same image. FindEvil scores memory anomalies by type (PROC_NOLINK, PE_INJECT, PRIVATE_RWX and the rest) and its forensic CSVs load straight into the GRID. Nothing is mounted. Not recommended for live acquisitions: the image drifts while it is read.' : 'Install: <code>sudo-z setup memprocfs</code>, then restart sudo-z.'}</div>
 
     <div class="sec">ORIGINAL EZ TOOLS</div>
     <input type="text" id="ezPath" placeholder="artifact folder (KAPE / Velociraptor output)" ${ez.tools.length ? '' : 'disabled'}>
@@ -569,13 +573,14 @@ function renderLocal() {
   $('#runImg').addEventListener('click', () => analyseImagePath($('#imgPath').value));
   $('#runKape')?.addEventListener('click', () => startJob('kape', { source: $('#kapeSrc').value, target: $('#kapeTarget').value, modules: $('#kapeMod').checked, vss: $('#kapeVss').checked }));
   $('#runVol')?.addEventListener('click', () => startJob('vol3', { image: $('#memPath').value }));
+  $('#runMpfs')?.addEventListener('click', () => startJob('memprocfs', { path: $('#memPath').value, elastic: $('#mpfsElastic').checked }));
   $('#runEz')?.addEventListener('click', () => startJob('ez', { path: $('#ezPath').value }));
   $('#autoLoad').addEventListener('change', (e) => { LOCAL.auto = e.target.checked; });
   $('#rescan')?.addEventListener('click', async (e) => { e.preventDefault(); LOCAL.caps = await api('/api/rescan', {}); renderLocal(); });
   pollJobs();
 }
 
-const ENDPOINT = { vol3: '/api/vol3/run', ez: '/api/ez/run', kape: '/api/kape/run' };
+const ENDPOINT = { vol3: '/api/vol3/run', ez: '/api/ez/run', kape: '/api/kape/run', memprocfs: '/api/memprocfs/run' };
 async function startJob(kind, body) {
   try { const j = await api(ENDPOINT[kind], body); LOCAL.mine.add(j.id); LOCAL.flash = ''; }
   catch (e) { LOCAL.flash = e.message; }
@@ -605,7 +610,7 @@ async function pollJobs() {
     const src = String(j.source || '').split(/[\\/]/).filter(Boolean).pop() || j.source || '';
     const st = j.status === 'running' ? 'RUN' : j.status === 'done' ? 'DONE' : 'FAIL';
     const pct = j.total ? Math.round((j.done / j.total) * 100) : null;
-    const loadable = j.status === 'done' && (j.kind === 'vol3' || j.kind === 'kape' || j.kind === 'ez' || j.kind === 'bstrings');
+    const loadable = j.status === 'done' && (j.kind === 'vol3' || j.kind === 'kape' || j.kind === 'ez' || j.kind === 'bstrings' || j.kind === 'memprocfs');
     return `<div class="jb ${j.status}"><div class="r"><span><b>${esc(j.kind.toUpperCase())}</b> ${esc(src)}</span><span class="st">${st}${j.status === 'running' && pct != null ? ' ' + pct + '%' : ''} · ${ago(j.started)}</span></div>
       ${j.status === 'running' ? `<div class="bar"><span style="width:${pct ?? 30}%" class="${pct == null ? 'ind' : ''}"></span></div><div class="cur">${esc(j.current || '')}</div>` : ''}
       ${j.error ? `<div class="bad">${esc(j.error)}</div>` : ''}
@@ -614,7 +619,7 @@ async function pollJobs() {
   el.querySelectorAll('[data-load]').forEach((b) => b.addEventListener('click', () => loadJob(b.dataset.load)));
   el.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => api('/api/open', { job: b.dataset.open }).catch((e) => { LOCAL.flash = e.message; pollJobs(); })));
   // auto-load jobs started from this page when they finish
-  for (const j of jobs) if (LOCAL.auto && LOCAL.mine.has(j.id) && j.status === 'done' && !LOCAL.loaded.has(j.id) && (j.kind === 'vol3' || j.kind === 'kape' || j.kind === 'ez' || j.kind === 'bstrings')) loadJob(j.id);
+  for (const j of jobs) if (LOCAL.auto && LOCAL.mine.has(j.id) && j.status === 'done' && !LOCAL.loaded.has(j.id) && (j.kind === 'vol3' || j.kind === 'kape' || j.kind === 'ez' || j.kind === 'bstrings' || j.kind === 'memprocfs')) loadJob(j.id);
   if (jobs.some((j) => j.status === 'running')) LOCAL.timer = setTimeout(pollJobs, 1500);
 }
 
@@ -653,7 +658,7 @@ async function loadJob(id) {
       const res = await fetch(`/api/job/${id}/file/${r.file.split('/').map(encodeURIComponent).join('/')}`, { headers: { 'X-Sudo-Z': '1' } });
       if (!res.ok) continue;
       const blob = await res.blob(); if (blob.size <= 4) continue;
-      const name = job.kind === 'vol3' ? `memory/${r.file}` : r.csv ? `ezcsv/${r.file.replace(/^mout\//, '')}` : `kape/${r.file.replace(/^tout\//, '')}`;
+      const name = job.kind === 'memprocfs' ? `memprocfs/${r.file}` : job.kind === 'vol3' ? `memory/${r.file}` : r.csv ? `ezcsv/${r.file.replace(/^mout\//, '')}` : `kape/${r.file.replace(/^tout\//, '')}`;
       files.push({ file: new File([blob], name.split('/').pop()), name });
     }
     LOCAL.flash = `${files.length} file(s) from ${job.kind} staged${skipped ? `, ${skipped} over 1.5 GB skipped` : ''}`;

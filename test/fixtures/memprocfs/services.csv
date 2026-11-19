@@ -1,0 +1,2 @@
+PID,Ordinal,ServiceName,DisplayName,User,StartType,State,Type1,Type2,ObjectAddress,ImagePath,DriverpathOrCmdline
+3010,42,RkSvc,Rk Service,LocalSystem,SERVICE_AUTO_START,RUNNING,WIN32_OWN_PROCESS,,0xffffb001,C:\Users\bob\AppData\Local\Temp\rk_agent.exe -svc,

@@ -1,0 +1,2 @@
+MatchIndex,Tags,Description,RuleAuthor,RuleVersion,MemoryType,MemoryTag,MemoryBaseAddress,ObjectAddress,PID,ProcessName,ProcessPath,CommandLine,User,Created,AddressCount,String0,Address0,String1,Address1,String2,Address2,String3,Address3,String4,Address4
+1,COBALTSTRIKE,Windows_Trojan_CobaltStrike,Elastic,1,PRIVATE,RWX,0x1f0000,0x0,1500,explorer.exe,C:\Windows\explorer.exe,explorer.exe,BOB\bob,2026-03-05 09:00:00,1,beacon,0x1f0100,,,,,,,,

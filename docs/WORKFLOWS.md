@@ -26,7 +26,7 @@ flowchart TD
 |---|---|---|
 | Single files, folders, zips (KAPE, Velociraptor, any layout) | Unpacked in memory, nested zips too; original Windows path recovered from the collection layout | [1] |
 | Disk images: raw/dd, split, E01, VHD, VHDX, QCOW2 | Read lazily (never fully loaded), MBR/GPT volumes found, BitLocker detected, NTFS read only, KAPE style targets extracted with their $SI times | [6] |
-| Memory images (home install) | Volatility 3 run in the background with 44 plugins (five are Sudo-Z's own), results auto-loaded | [5] |
+| Memory images (home install) | Volatility 3 and MemProcFS forensic mode run in the background with 44 plugins (five are Sudo-Z's own), results auto-loaded | [5] |
 | Volatility 3 JSON | Parsed in the browser | [7] |
 | EZ tool, KAPE module, Autoruns, Sigcheck, Hayabusa CSVs | Recognised by header and graded like the native artifact | [8] |
 | Office documents and PDFs | Metadata, macros, links and actions read; also string scanned | [9] |
@@ -100,7 +100,15 @@ When positive:
 * **Automatic:** downloads open the Delivered stage; SRUM bytes sent point exfiltration leads at a program; domains and IPs become indicators [11].
 * **Next line:** pivot on the destination across hosts and proxy logs [2].
 
-### 2.9 Memory (Volatility 3)
+### 2.9 Memory (MemProcFS)
+
+Detects: the 22 FindEvil types, graded and explained, with PROC_NOLINK, PE_INJECT, PEB_MASQ, PE_HDR_SPOOF, PROC_BAD_DTB and AV_DETECT critical; PRIVATE_RWX, NOIMAGE_RWX, PROC_PARENT, PROC_USER, PROC_BASEADDR, UM_APC, THREAD, DRIVER_PATH, PEB_BAD_LDR, PE_NOLINK and PE_PATCHED high; PRIVATE_RX, NOIMAGE_RX, HIGH_ENTROPY and PROC_DEBUG medium; TIME_CHANGE as context. YARA hits are critical. Executable private memory is lowered in just-in-time runtimes [25].
+
+When positive:
+* **Automatic:** processes go into the execution list, so they reach Programs and the leads. Services and tasks become persistence, network rows become indicators and timeline events. A process flagged by both MemProcFS and Volatility 3 raises a **critical** correlation finding [25].
+* **Next line:** dump the region and confirm the family; for PROC_NOLINK, capture memory before rebooting [2].
+
+### 2.10 Memory (Volatility 3)
 
 Detects: hidden processes (psscan versus pslist, DKOM unlink), name versus command line mismatches, malfind, hollowing, process ghosting, PEB masquerading, unbacked threads, direct, indirect and unhooked syscalls, ETW patching, Skeleton Key. LSASS and other key processes are checked for unexpected mapped paths (a MappedPath of N/A where a file is expected). Rootkit checks cover SSDT hooks from both the global table and per-thread KTHREAD tables (Sudo-Z's own plugin), driver and module cross views, callbacks, IRP hooks, timers, orphan kernel threads, the service list cross-view and the device tree. Volatility 2's `apihooks` and `idt` were never ported to Volatility 3, so Sudo-Z ships its own: inline and import table hooks on exported functions, and every processor's Interrupt Descriptor Table. Hidden processes are judged on seven cross-views: Volatility 3's psxview gives four (pslist, psscan, thrdscan, csrss) and Sudo-Z adds PspCidTable, session process lists and desktop threads, with Volatility 2's `-R` rules built in so System, smss.exe, csrss.exe and exited processes are explained rather than flagged. Named pipes are checked against known tool pipes, random names and Potato style impersonation [7, 20, 21, 22].
 
@@ -109,7 +117,7 @@ When positive:
 * **Next line:** dump the process, compare the in-memory image with the file on disk, and capture a full image before rebooting for rootkits [2].
 * **Not automatic:** Sudo-Z does not dump the flagged process by itself. Run procdump or `vol windows.memmap --dump --pid N` next.
 
-### 2.10 Strings (bstrings)
+### 2.11 Strings (bstrings)
 
 Searches every file (and disk image file) with bstrings style patterns: URLs, IPs, emails, paths, registry keys, base64, GUIDs, crypto wallets and keywords. The home install can run the real bstrings.exe [23].
 
@@ -177,3 +185,4 @@ Each lead carries its evidence, entities to pivot on and a Next line [11].
 22. `js/ioc/pipes.js`
 23. `js/core/bsearch.js`
 24. `js/report.js`
+25. `js/tools/memprocfs.js`, `tools/mpfs_run.py`
