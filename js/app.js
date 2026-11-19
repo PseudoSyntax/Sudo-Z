@@ -2,7 +2,7 @@
 import { CATALOG, NOT_ACCEPTED_HELP, availability } from './catalog.js';
 import { markdown, csv, timelineCsv, findingsCsv, indicatorsCsv, leadsCsv, programsCsv, macbCsv, mitreSummary, indicatorLabel, defang } from './report.js';
 import { Grid, datasets, mftAllTables } from './grid.js';
-import { kindOf, lookup, verdict, getKey, setKey, refang } from './ioc/vt.js';
+import { kindOf, lookup, verdict, getKey, setKey, refang, guiUrl } from './ioc/vt.js';
 import { bodyfile } from './ioc/macb.js';
 import { BUILTIN } from './core/bsearch.js';
 import { PROGRAM_COLUMNS } from './ioc/programs.js';
@@ -495,12 +495,26 @@ const VT = { cache: new Map(), open: null };
 /** A small button for one value. Nothing is sent until it is clicked. */
 export function vtChip(value, label) {
   const k = kindOf(value);
-  if (!k) return '';
+  // not a hash, domain, IP or URL: still offer a VirusTotal search, which is what an
+  // AV detection name or a mutex is actually useful for
+  if (!k) {
+    const u = guiUrl(value);
+    return u && String(value).trim().length > 3
+      ? `<a class="vt vtsearch" href="${esc(u)}" target="_blank" rel="noopener noreferrer" title="Search VirusTotal for this value in a new tab. Sudo-Z sends nothing: the request comes from your browser.">search</a>`
+      : '';
+  }
   const c = VT.cache.get(k.value);
   const v = c && c.summary ? verdict(c.summary) : null;
   const cls = c ? (c.notFound ? 'vt-none' : v ? 'vt-' + v.sev : 'vt-err') : '';
   const text = c ? (c.notFound ? 'not in VT' : v ? v.text : 'VT failed') : (label || 'VT');
-  return `<button class="vt ${cls}" data-vt="${esc(k.value)}" title="${c ? 'Click for the full VirusTotal result' : `Send this ${k.kind.replace('_', ' ')} to VirusTotal. Nothing is sent until you click.`}">${esc(text)}</button>`;
+  const what = k.kind.replace('_', ' ');
+  // The chip is a real link to the VirusTotal page for this value. Sudo-Z sends nothing:
+  // your browser loads the page, in your own session, the same as typing it in yourself.
+  // A link rather than a button so middle click, ctrl click and open-in-new-tab all work.
+  const open = `<a class="vt ${cls}" href="${esc(k.gui)}" target="_blank" rel="noopener noreferrer" title="Open the VirusTotal page for this ${esc(what)} in a new tab. Sudo-Z sends nothing: the request comes from your browser.">${esc(text)}</a>`;
+  // With a key set, a second control fetches the verdict here instead of leaving the console.
+  const fetchable = getKey() && !c;
+  return open + (fetchable ? `<button class="vt vtq" data-vt="${esc(k.value)}" title="Look this ${esc(what)} up through the API and show the result here, without leaving Sudo-Z.">&#8681;</button>` : '');
 }
 function vtRow(k, v) { return `<tr><td>${esc(k)}</td><td class="mono">${esc(String(v))}</td></tr>`; }
 function vtClose() { VT.open?.remove(); VT.open = null; }
@@ -515,7 +529,7 @@ async function vtShow(value, anchor) {
   const key = getKey();
   const guiLine = `<div class="vtfoot"><a href="${k.gui}" target="_blank" rel="noopener noreferrer">Open on virustotal.com</a> &nbsp;·&nbsp; opening the page sends nothing from Sudo-Z: your browser makes that request.</div>`;
   if (!key) {
-    draw(`<div class="vtbody"><p>No VirusTotal API key is set, so Sudo-Z will not call the API.</p>
+    draw(`<div class="vtbody"><p>No VirusTotal API key is set, so Sudo-Z will not call the API. The <b>VT</b> link beside each value still works and sends nothing from here.</p>
       <p class="muted">A key is only used for lookups you click. It is kept in this browser and never written into a report or an export.</p>
       <div class="vtkey"><input type="password" id="vtk" placeholder="VirusTotal API key" autocomplete="off"><button class="btn" id="vtsave">SAVE KEY</button></div></div>${guiLine}`);
     box.querySelector('#vtsave').addEventListener('click', () => { const val = box.querySelector('#vtk').value.trim(); if (val) { setKey(val); vtShow(value, anchor); } });

@@ -81,5 +81,16 @@ globalThis.fetch = async (url) => { if (/virustotal/.test(url)) throw new TypeEr
 const r6 = await lookup('evil.example.com', { key: 'k'.repeat(64), local: true });
 ok(viaServer === 1 && r6.ok && r6.via === 'home server', 'with the home install running, the lookup falls back through the local server');
 
+// ---------------------------------------------------------------- the link out, which needs no key
+const { guiUrl } = await import('../js/ioc/vt.js');
+ok(guiUrl('44d88612fea8a8f36de82e1278abb02f') === 'https://www.virustotal.com/gui/file/44d88612fea8a8f36de82e1278abb02f', 'a hash links to its file page');
+ok(guiUrl('evil.example.com') === 'https://www.virustotal.com/gui/domain/evil.example.com', 'a domain links to its domain page');
+ok(guiUrl('203.0.113.9') === 'https://www.virustotal.com/gui/ip-address/203.0.113.9', 'an IP links to the ip-address page, with the hyphen VirusTotal uses');
+ok(guiUrl('http://bad.example.com/a') === 'https://www.virustotal.com/gui/url/aHR0cDovL2JhZC5leGFtcGxlLmNvbS9h', 'a URL links to its base64url id');
+ok(guiUrl('evil[.]example[.]com') === 'https://www.virustotal.com/gui/domain/evil.example.com', 'a defanged value is refanged before the link is built');
+ok(guiUrl('Trojan:PowerShell/Powersploit.M') === 'https://www.virustotal.com/gui/search/Trojan%3APowerShell%2FPowersploit.M', 'anything else falls back to a VirusTotal search, url encoded');
+ok(guiUrl('') === '' && guiUrl('   ') === '', 'an empty value gets no link');
+ok(guiUrl('a b&c=d').startsWith('https://www.virustotal.com/gui/search/') && !/[ &=]/.test(guiUrl('a b&c=d').split('/search/')[1]), 'the search term is encoded, so nothing breaks out of the URL');
+
 console.log(fail ? `\n${fail} FAILED` : '\nall VirusTotal checks passed');
 process.exit(fail ? 1 : 0);

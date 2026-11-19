@@ -299,7 +299,10 @@ table.exec td.ok { color: var(--green); } table.exec td.bad { color: var(--high)
 table.exec td:nth-child(-n+4), table.exec th { white-space: nowrap; }
 
 /* ---------------------------------------------------------------- VirusTotal, click to send */
-.vt { font: inherit; font-size: 11px; padding: 1px 7px; border: 1px solid var(--line2); background: transparent; color: var(--dim); cursor: pointer; white-space: nowrap; }
+.vt { display: inline-block; font: inherit; font-size: 11px; padding: 1px 7px; border: 1px solid var(--line2); background: transparent; color: var(--dim); cursor: pointer; white-space: nowrap; text-decoration: none; }
+a.vt::after { content: ' \2197'; opacity: .55; }
+.vt.vtq { margin-left: 3px; padding: 1px 5px; }
+.vt.vtq::after { content: none; }
 .vt:hover { border-color: var(--amber); color: var(--amber); }
 .vt.vt-critical { border-color: #ff4d4d; color: #ff6b6b; }
 .vt.vt-high { border-color: #ff8c42; color: #ff9f5a; }
@@ -332,3 +335,4 @@ table.vtt td.mono { word-break: break-all; }
 .vtfoot { padding: 8px 10px; border-top: 1px solid var(--line2); color: var(--dim); font-size: 11px; }
 .vtfoot a { color: var(--amber); }
 .hashes .vt { margin-left: 4px; }
+.vt.vtsearch { font-style: italic; opacity: .75; }
