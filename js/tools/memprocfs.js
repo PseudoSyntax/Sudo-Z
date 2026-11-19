@@ -10,6 +10,7 @@
 import { classifyCommand, classifyPath, baseName, isLolbin } from '../ioc/heuristics.js';
 import { isPrivateIp } from '../ioc/indicators.js';
 import { parseCsv } from './ezcsv.js';
+import { classifyPort, portPatterns } from '../ioc/ports.js';
 import { utf8 } from '../core/bytes.js';
 
 const T = (title, columns, rows, note) => ({ title, columns, rows, note });
@@ -148,6 +149,7 @@ export function runMemProcFs(u8, f, ctx, kind, shared) {
       break;
     }
     case 'net': {
+      const portSeen = new Set();
       for (const r of rows) {
         const dst = g(r, 'DstAddr'), proc = g(r, 'Process'), time = t(g(r, 'Time'));
         if (!dst || dst === '*' || dst === '0.0.0.0' || dst === '::') continue;
@@ -155,7 +157,11 @@ export function runMemProcFs(u8, f, ctx, kind, shared) {
         ctx.indicators.add(pub ? 'ipv4' : 'internal_ip', dst, file, `${proc} ${g(r, 'Proto')} ${g(r, 'State')} port ${g(r, 'DstPort')}`);
         if (time) ctx.event({ time, tool, file, type: 'Network connection (memory)', desc: `${proc} (PID ${g(r, 'PID')}) ${g(r, 'Proto')} -> ${dst}:${g(r, 'DstPort')} ${g(r, 'State')}` });
         if (pub && (isLolbin(baseName(proc)) || classifyPath(g(r, 'ProcessPath')).sev)) note('high', 'Command and Control', `${baseName(proc)} connected to ${dst}:${g(r, 'DstPort')}`, 'A living off the land binary or a program in a suspicious folder talking to a public address is worth pivoting on across every host.', `${g(r, 'ProcessPath') || proc}\n${g(r, 'Proto')} ${g(r, 'SrcAddr')}:${g(r, 'SrcPort')} -> ${dst}:${g(r, 'DstPort')} ${g(r, 'State')}`, ['T1071'], time);
+        const pc = classifyPort(g(r, 'DstPort'), { proto: g(r, 'Proto'), owner: proc, path: g(r, 'ProcessPath'), peerPrivate: !pub, peerIsLoopback: /^127\./.test(dst) || dst === '::1' });
+        const pk = pc && `${proc}|${pc.port}`;
+        if (pc && pc.sev !== 'info' && pc.sev !== 'low' && !portSeen.has(pk)) { portSeen.add(pk); note(pc.sev, pc.cat, `${baseName(proc)} connected out on port ${pc.port} (${pc.name})`, `${pc.why ? pc.why + ' ' : ''}${pc.reasons.length ? `Here: ${pc.reasons.join('; ')}.` : ''}`.trim(), `${g(r, 'ProcessPath') || proc}\n${g(r, 'Proto')} -> ${dst}:${pc.port} ${g(r, 'State')}`, pc.mitre, time); }
       }
+      for (const pt of portPatterns(rows.map((r) => ({ peer: g(r, 'DstAddr'), port: g(r, 'DstPort'), proto: g(r, 'Proto'), owner: g(r, 'Process'), time: t(g(r, 'Time')) })))) note(pt.sev, pt.cat, pt.title, pt.detail, pt.evidence, pt.mitre, pt.time);
       break;
     }
     case 'services': {

@@ -12,6 +12,7 @@ import { classifyPipe, normPipe, pipesInText } from '../ioc/pipes.js';
 import { injectionChecks } from './volinject.js';
 import { rootkitPlugin, rootkitFinal, hookPlugin } from './volrootkit.js';
 import { classifyShellcode, shellcodeMarks, normHex } from '../ioc/shellcode.js';
+import { classifyPort, portPatterns } from '../ioc/ports.js';
 
 const T = (title, columns, rows, note) => ({ title, columns, rows, note });
 
@@ -115,10 +116,9 @@ export function runVol(u8, f, ctx, shared) {
         if (fa && !/^(\*|0\.0\.0\.0|::|-)$/.test(fa) && /^\d+\.\d+\.\d+\.\d+$/.test(fa)) {
           ctx.indicators.add(isPrivateIp(fa) ? 'internal_ip' : 'ipv4', fa, f.name, `${owner} PID ${r.PID} ${r.Proto} ${r.LocalPort}->${r.ForeignPort} ${r.State || ''}`);
           if (!isPrivateIp(fa) && /^(powershell|pwsh|rundll32|regsvr32|mshta|certutil|bitsadmin|msbuild|installutil|wscript|cscript|notepad|calc|cmd|svchost32|dllhost|wmic)\.exe$/i.test(owner)) note('high', `${owner} (PID ${r.PID}) connected to ${fa}:${r.ForeignPort}`, `${r.State || ''} created ${r.Created || ''}`, '', ['T1071', 'T1218'], 'Command and Control', r.Created);
-          if (/^(4444|1337|31337|8888|9001|9050|6667|5555|50050)$/.test(String(r.ForeignPort))) note('medium', `Connection to suspicious port ${r.ForeignPort} by ${owner}`, `${fa}`, '', ['T1571'], 'Command and Control', r.Created);
+
           if (String(r.ForeignPort) === '3389') ctx.indicators.add('rdp_target', fa, f.name, `memory netscan ${owner}`);
         }
-        if (/LISTEN/i.test(r.State || '') && /^(4444|1337|31337|8888|9001|5555|50050|8080)$/.test(String(r.LocalPort)) && !/^(system|svchost\.exe|lsass\.exe|services\.exe|java\.exe|httpd\.exe|nginx\.exe|node\.exe)$/i.test(owner)) note('medium', `${owner} listening on port ${r.LocalPort}`, `PID ${r.PID}`, '', ['T1571'], 'Command and Control');
         if (r.Created && fa && !/^(\*|0\.0\.0\.0|::)$/.test(fa)) ctx.event({ time: r.Created, tool: 'Volatility 3', file: f.name, type: 'Network connection (memory)', desc: `${owner} ${r.LocalAddr}:${r.LocalPort} -> ${fa}:${r.ForeignPort} ${r.State || ''}` });
       }
       tables.push(T('Network connections', ['Proto', 'Local', 'Foreign', 'State', 'PID', 'Owner', 'Created'], rows.map((r) => [r.Proto, `${r.LocalAddr}:${r.LocalPort}`, `${r.ForeignAddr}:${r.ForeignPort}`, r.State, r.PID, r.Owner, r.Created])));
@@ -285,6 +285,7 @@ export function finalizeVol(shared, ctx) {
     const extra = chosen !== 'psscan' && v.psscan ? v.psscan.filter((r) => !ids.has(`${r.PID}|${procName(r)}`)) : [];
     processRules(v[chosen], extra, shared.volFile[chosen], ctx);
   }
+  try { portChecks(v, shared, ctx); } catch (e) { /* ports are a bonus, never fatal */ }
   try { crossView(v, shared, ctx); } catch (e) { ctx.finding({ sev: 'info', category: 'Memory', tool: 'Volatility 3', file: '', title: 'Memory: cross-view process check failed: ' + e.message }); }
   // only when no cross-view ran, otherwise crossView() raises the better finding
   if (v.pslist && v.psscan && !v.psxview && !v.pspcid && !v.sessionprocs && !v.deskscan) {
@@ -308,6 +309,40 @@ export function finalizeVol(shared, ctx) {
       }
     }
   }
+}
+
+/** Ports, judged once every plugin is in so the owning process path is known. */
+function portChecks(v, shared, ctx) {
+  const rows = [...(v.netscan || []), ...(v.netstat || [])];
+  if (!rows.length) return;
+  const path = new Map();
+  for (const r of v.pstree || []) if (r.Path) path.set(String(r.PID), String(r.Path));
+  for (const r of v.pslist || []) if (!path.has(String(r.PID)) && r.Path) path.set(String(r.PID), String(r.Path));
+  for (const r of v.cmdline || []) if (!path.has(String(r.PID))) { const a = String(r.Args || ''); const m = a.match(/^"([^"]+)"/) || a.match(/^(\S+\.exe)/i); if (m) path.set(String(r.PID), m[1]); }
+  const file = shared.volFile.netscan || shared.volFile.netstat || '';
+  const note = (sev, title, detail, evidence, mitre, category, time) => ctx.finding({ sev, category: category || 'Command and Control', tool: 'Volatility 3', file, time, title: `Memory: ${title}`, detail, evidence, mitre });
+  const seen = new Set();
+  for (const r of rows) {
+    const owner = String(r.Owner || ''), pid = String(r.PID || ''), p = path.get(pid) || '';
+    const fa = String(r.ForeignAddr || ''), listening = /LISTEN/i.test(r.State || '');
+    if (!listening && fa && !/^(\*|0\.0\.0\.0|::|-|)$/.test(fa)) {
+      const pc = classifyPort(r.ForeignPort, { proto: r.Proto, owner, path: p, peerPrivate: isPrivateIp(fa), peerIsLoopback: /^127\./.test(fa) || fa === '::1' });
+      const k = pc && `out|${owner}|${pc.port}`;
+      if (pc && pc.sev !== 'info' && !seen.has(k)) {
+        seen.add(k);
+        note(pc.sev, `${owner || 'a process'} connected out on port ${pc.port} (${pc.name})`, `${pc.why ? pc.why + ' ' : ''}${pc.reasons.length ? `Here: ${pc.reasons.join('; ')}.` : ''}`.trim() || `Port ${pc.port} is ${pc.name}.`, `PID ${pid} ${p || owner}\n${r.Proto} -> ${fa}:${pc.port} ${r.State || ''}`, pc.mitre, pc.cat, r.Created);
+      }
+    }
+    if (listening) {
+      const lc = classifyPort(r.LocalPort, { proto: r.Proto, listening: true, owner, path: p });
+      const k = lc && `lis|${owner}|${lc.port}`;
+      if (lc && (lc.sev === 'medium' || lc.sev === 'high' || lc.sev === 'critical') && !seen.has(k)) {
+        seen.add(k);
+        note(lc.sev, `${owner || 'a process'} is listening on port ${lc.port} (${lc.name})`, `${lc.why ? lc.why + ' ' : ''}${lc.reasons.length ? `Here: ${lc.reasons.join('; ')}.` : ''}`.trim(), `PID ${pid} ${p || owner}\n${r.Proto} ${r.LocalAddr}:${lc.port} LISTENING`, lc.mitre, lc.cat, r.Created);
+      }
+    }
+  }
+  for (const pt of portPatterns(rows.map((r) => ({ peer: r.ForeignAddr, port: r.ForeignPort, proto: r.Proto, owner: r.Owner, time: r.Created, listening: /LISTEN/i.test(r.State || '') })))) note(pt.sev, pt.title, pt.detail, pt.evidence, pt.mitre, pt.cat, pt.time);
 }
 
 /** Named pipes from handles, filescan and command lines, graded with the owning process path when known. */

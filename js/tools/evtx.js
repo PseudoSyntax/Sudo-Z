@@ -7,6 +7,7 @@ import { isPrivateIp } from '../ioc/indicators.js';
 import { KEYWORD_RULES } from '../core/strings.js';
 import { expectedParents } from '../ioc/baseline.js';
 import { classifyPipe, normPipe } from '../ioc/pipes.js';
+import { classifyPort } from '../ioc/ports.js';
 
 const LOGON_TYPES = { 2: 'Interactive', 3: 'Network', 4: 'Batch', 5: 'Service', 7: 'Unlock', 8: 'NetworkCleartext', 9: 'NewCredentials', 10: 'RemoteInteractive (RDP)', 11: 'CachedInteractive', 12: 'CachedRemoteInteractive', 13: 'CachedUnlock' };
 const PRIV_GROUPS = /^(administrators|domain admins|enterprise admins|schema admins|remote desktop users|backup operators|account operators|server operators|dnsadmins|group policy creator owners|exchange (trusted subsystem|windows permissions)|organization management|remote management users|hyper-v administrators)$/i;
@@ -297,7 +298,10 @@ function sysmon(r, d, f, ctx, note, ev) {
       if (host && !/\.(local|lan|internal|arpa)$/i.test(host)) ctx.domains(host, f.name);
       if (/\\(powershell|pwsh|rundll32|regsvr32|mshta|certutil|bitsadmin|msbuild|installutil|wscript|cscript|msiexec|cmstp|wmic|notepad|calc)\.exe$/i.test(d.Image || '') && d.Initiated === 'true' && ip(dst) && !isPrivateIp(dst)) note(r, 'high', `${baseName(d.Image)} made an outbound connection to ${dst}:${port}`, host, ['T1071', 'T1218'], 'Command and Control');
       if (port === '3389' && d.Initiated === 'true') ev(r, 'Outbound RDP connection', `${d.Image} -> ${dst}`);
-      if (/^(4444|1337|31337|8888|9001|9050|6667|5555)$/.test(port) && d.Initiated === 'true') note(r, 'medium', `Connection to suspicious port ${port}`, `${d.Image} -> ${dst}`, ['T1571'], 'Command and Control');
+      if (d.Initiated === 'true') {
+        const pc = classifyPort(port, { proto: d.Protocol, owner: d.Image, path: d.Image, peerPrivate: isPrivateIp(dst), peerIsLoopback: /^127\./.test(dst) || dst === '::1' });
+        if (pc && pc.sev !== 'info' && pc.sev !== 'low') note(r, pc.sev, `${baseName(d.Image || '')} connected out on port ${pc.port} (${pc.name})`, `${pc.why ? pc.why + ' ' : ''}${pc.reasons.length ? `Here: ${pc.reasons.join('; ')}.` : ''}`.trim(), `${d.Image}\n${d.Protocol} -> ${dst}:${pc.port}${d.DestinationHostname ? ` (${d.DestinationHostname})` : ''}`, pc.mitre, pc.cat);
+      }
       break;
     }
     case 6: ctx.sign({ path: d.ImageLoaded, sha1: (String(d.Hashes || '').match(/SHA1=([0-9A-Fa-f]{40})/) || [])[1], signed: d.Signed === 'true' ? true : d.Signed === 'false' ? false : null, verified: /^valid$/i.test(d.SignatureStatus || '') ? true : d.SignatureStatus ? false : null, signer: d.Signature, status: d.SignatureStatus, kind: 'driver', source: 'Sysmon 6', file: f.name, time: r.TimeCreated, host: r.Computer });
