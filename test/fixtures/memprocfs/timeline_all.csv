@@ -1,0 +1,3 @@
+Time,Type,Action,PID,Value32,Value64,Text,Pad
+2026-03-05 12:00:00,process,create,3010,0,0,rk_agent.exe,
+2026-03-05 12:01:00,net,connect,3010,0,0,203.0.113.44:443,

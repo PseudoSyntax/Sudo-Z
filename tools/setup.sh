@@ -5,6 +5,7 @@
 #   sudo-z setup dotnet     private .NET 10 runtime (Microsoft dotnet-install.sh)
 #   sudo-z setup ez         original Eric Zimmerman tools (.NET 10 builds); implies dotnet
 #   sudo-z setup vol        Python venv + Volatility 3 (bootstraps Python with uv if needed)
+#   sudo-z setup memprocfs  MemProcFS (read through its Python API, nothing is mounted)
 #   sudo-z setup status     show what is installed
 set -euo pipefail
 WHAT="${1:-all}"
@@ -69,19 +70,34 @@ install_vol() {
   "$VENV/bin/vol" -h >/dev/null 2>&1 && say "Volatility 3 ready: $("$VENV/bin/vol" -h 2>&1 | grep -oE 'Framework [0-9.]+')"
 }
 
+install_memprocfs() {
+  install_vol_python
+  say "installing MemProcFS into $VENV"
+  if "$VENV/bin/python" -m pip install -U memprocfs; then
+    v=$("$VENV/bin/python" -c 'import memprocfs;print(getattr(memprocfs,"__version__","unknown"))' 2>/dev/null)
+    say "MemProcFS ready: ${v:-installed}. Nothing is mounted: Sudo-Z reads its forensic output through the Python API, so no FUSE is needed."
+    say "FindEvil's built-in YARA rules are licensed under the Elastic License 2.0 and stay off until you tick the box in the console."
+  else
+    say "MemProcFS install failed. It needs a 64-bit Python; on Linux it also needs a recent glibc."
+    return 1
+  fi
+}
+
 status() {
   if have_net10 "$DOTNET_DIR/dotnet" || have_net10 dotnet; then n=yes; else n="no  (sudo-z setup dotnet)"; fi
   c=$( { find "$EZ_DIR" \( -name '*.exe' -o -name '*.dll' \) 2>/dev/null || true; } | wc -l | tr -d ' ')
   [ -x "$VENV/bin/vol" ] && v=yes || v="no  (sudo-z setup vol)"
-  echo "  .NET 10 runtime : $n"; echo "  EZ tools        : ${c} files in $EZ_DIR"; echo "  Volatility 3    : $v"; echo "  KAPE            : Windows only (disk images are read by the console itself)"
+  "$VENV/bin/python" -c 'import memprocfs' 2>/dev/null && m=yes || m="no  (sudo-z setup memprocfs)"
+  echo "  .NET 10 runtime : $n"; echo "  EZ tools        : ${c} files in $EZ_DIR"; echo "  Volatility 3    : $v"; echo "  MemProcFS       : $m"; echo "  KAPE            : Windows only (disk images are read by the console itself)"
 }
 
 case "$WHAT" in
   dotnet) install_dotnet ;;
   ez) install_ez ;;
   vol) install_vol ;;
+  memprocfs) install_memprocfs ;;
   status) status ;;
   kape) say "KAPE is a Windows program. On this OS the console reads disk images (E01, VHD, VHDX, raw, QCOW2) itself: use ANALYSE IMAGE." ;;
-  all) rc=0; install_ez || { say "EZ tools step failed"; rc=1; }; install_vol || { say "Volatility 3 step failed"; rc=1; }; status; exit $rc ;;
-  *) echo "unknown setup target '$WHAT' (use all, dotnet, ez, vol, kape, status)" >&2; exit 1 ;;
+  all) rc=0; install_ez || { say "EZ tools step failed"; rc=1; }; install_vol || { say "Volatility 3 step failed"; rc=1; }; install_memprocfs || say "MemProcFS step skipped"; status; exit $rc ;;
+  *) echo "unknown setup target '$WHAT' (use all, dotnet, ez, vol, memprocfs, kape, status)" >&2; exit 1 ;;
 esac

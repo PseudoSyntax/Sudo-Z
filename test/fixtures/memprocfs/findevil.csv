@@ -1,0 +1,12 @@
+PID,ProcessName,Type,Address,Description
+1500,C:\Windows\explorer.exe,PRIVATE_RWX,0x1f0000,PRIVATE RWX 0x1f0000-0x1f3fff
+1500,C:\Windows\explorer.exe,PE_INJECT,0x2a0000,DLL not present on disk
+1500,C:\Windows\explorer.exe,PE_PATCHED,0x7ffa1000,ntdll.dll!NtCreateFile patched
+3010,C:\Users\bob\AppData\Local\Temp\rk_agent.exe,PROC_NOLINK,0x0,Process not in EPROCESS doubly-linked list
+3010,C:\Users\bob\AppData\Local\Temp\rk_agent.exe,PROC_PARENT,0x0,Unexpected parent process
+3010,C:\Users\bob\AppData\Local\Temp\rk_agent.exe,PROC_USER,0x0,Token indicates unexpected user context
+900,C:\Windows\System32\svchost.exe,NOIMAGE_RWX,0x3b0000,NOIMAGE RWX
+4100,C:\Program Files\dotnet\dotnet.exe,NOIMAGE_RX,0x4c0000,NOIMAGE RX
+4100,C:\Program Files\dotnet\dotnet.exe,PRIVATE_RX,0x4d0000,PRIVATE RX
+2200,C:\Windows\System32\lsass.exe,PEB_MASQ,0x0,PEB masquerading detected
+0,,TIME_CHANGE,0x0,Clock moved backwards

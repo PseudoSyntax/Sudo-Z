@@ -93,6 +93,17 @@ function Install-Vol {
   if (Test-Path $vol) { Say "Volatility 3 ready ($((& $vol -h 2>&1 | Select-String 'Framework [0-9.]+').Matches.Value))" 'Green' } else { throw 'Volatility 3 install failed' }
 }
 
+function Install-MemProcFS {
+  $venv = Join-Path $Dir 'venv'; $vpy = Join-Path $venv 'Scripts\python.exe'
+  if (-not (Test-Path $vpy)) { Install-Vol }
+  Say 'installing MemProcFS into the venv'
+  & $vpy -m pip install -U memprocfs
+  if ($LASTEXITCODE -ne 0) { throw 'MemProcFS install failed (it needs a 64-bit Python)' }
+  $v = & $vpy -c 'import memprocfs;print(getattr(memprocfs,"__version__","unknown"))' 2>$null
+  Say "MemProcFS ready ($v). Nothing is mounted: Sudo-Z reads its forensic output through the Python API, so Dokany is not needed." 'Green'
+  Say "FindEvil's built-in YARA rules are licensed under the Elastic License 2.0 and stay off until you tick the box in the console." 'Yellow'
+}
+
 function Find-Kape {
   $c = @($env:SUDOZ_KAPE, (Join-Path $Dir 'kape\kape.exe'), 'C:\KAPE\kape.exe', 'C:\Tools\KAPE\kape.exe', "$env:USERPROFILE\Downloads\KAPE\kape.exe") | Where-Object { $_ -and (Test-Path $_) }
   if ($c) { return $c[0] }
@@ -102,6 +113,10 @@ function Find-Kape {
 }
 function Install-Kape {
   # KAPE is free but licensed by Kroll behind a registration form, so it cannot be downloaded silently.
+  $vpy = Join-Path $Dir 'venv\Scripts\python.exe'
+  $m = $false
+  if (Test-Path $vpy) { & $vpy -c 'import memprocfs' 2>$null | Out-Null; $m = ($LASTEXITCODE -eq 0) }
+  Write-Host ("  MemProcFS       : {0}" -f $(if ($m) { 'yes' } else { 'no  (sudo-z setup memprocfs)' }))
   $k = Find-Kape
   if (-not $k) {
     $dest = Join-Path $Dir 'kape'
@@ -131,12 +146,14 @@ switch ($What) {
   'dotnet' { Install-DotNet }
   'ez' { Install-EZ }
   'vol' { Install-Vol }
+  'memprocfs' { Install-MemProcFS }
   'kape' { Install-Kape }
   'status' { Show-Status }
   'all' {
     $failed = @()
     try { Install-EZ } catch { $failed += "EZ tools: $($_.Exception.Message)" }
     try { Install-Vol } catch { $failed += "Volatility 3: $($_.Exception.Message)" }
+    try { Install-MemProcFS } catch { Say "MemProcFS step skipped: $($_.Exception.Message)" 'Yellow' }
     Show-Status
     if ($failed) { $failed | ForEach-Object { Say $_ 'Red' }; exit 1 }
   }

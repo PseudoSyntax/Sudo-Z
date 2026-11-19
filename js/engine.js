@@ -29,11 +29,12 @@ import { runPe } from './tools/binaries.js';
 import { buildPrograms, gradeSignatures } from './ioc/programs.js';
 import { analyseExecution } from './ioc/execution.js';
 import { analyseMacb } from './ioc/macb.js';
+import { detectMemProcFs, runMemProcFs, memProcFsFinal } from './tools/memprocfs.js';
 import { OOXML_EXT, OLE_EXT, isPdf } from './parsers/docmeta.js';
 import { runDoc } from './tools/documents.js';
 import { detectEzCsv, runEzCsv } from './tools/ezcsv.js';
 
-export const VERSION = '1.11.0';
+export const VERSION = '1.12.0';
 const MAX_ZIP_DEPTH = 3;
 const MAX_FILE = 1.5 * 1024 ** 3;
 
@@ -69,6 +70,7 @@ export function detect(name, u8) {
   if (OOXML_EXT.test(b) && isZip(u8)) return { id: 'doc', kind: 'ooxml', tool: 'Sudo-Z docmeta', label: 'Office document (OOXML)' };
   if (OLE_EXT.test(b) && isCfb(u8)) return { id: 'doc', kind: 'ole', tool: 'Sudo-Z docmeta', label: 'Office document (OLE, 97-2003)' };
   if (/\.pdf$/i.test(b) && isPdf(u8)) return { id: 'doc', kind: 'pdf', tool: 'Sudo-Z docmeta', label: 'PDF document' };
+  if (/\.csv$/i.test(b)) { const mp = detectMemProcFs(name, utf8(u8.subarray(0, 8192))); if (mp) return { id: 'mpfs', kind: mp, tool: 'MemProcFS', label: `MemProcFS forensic ${mp}.csv` }; }
   const ez = detectEzCsv(b, u8);
   if (ez) return { id: 'ezcsv', tool: ez.tool, label: ez.label, ez };
   const head = utf8(u8.subarray(0, 4096));
@@ -233,6 +235,7 @@ export async function analyze(inputs, opts = {}) {
         case 'velo': r = runVelo(f.data, ff, ctx); break;
         case 'pe': r = runPe(f.data, ff, ctx, { winPath: f.winPath, fromImage: f.fromImage, si: f.si, sha1: rec.hashes?.sha1 }); break;
         case 'ezcsv': r = runEzCsv(f.data, ff, ctx, f.det.ez, shared); break;
+        case 'mpfs': r = runMemProcFs(f.data, ff, ctx, f.det.kind, shared); break;
         case 'doc': r = await runDoc(f.data, ff, ctx, f.det.kind, { winPath: f.winPath, si: f.si }); break;
         case 'velo-meta': { const t = utf8(f.data); for (const m of t.matchAll(/"(?:Hostname|Fqdn|hostname|fqdn)"\s*:\s*"([^"]+)"/g)) ctx.hosts.add(m[1]); r = { tool: 'Velociraptor', artifact: f.det.label, summary: `${f.data.length} bytes`, tables: [], notes: [] }; break; }
         case 'reglog': case 'wal':
@@ -264,6 +267,7 @@ export async function analyze(inputs, opts = {}) {
   onProgress(0.99, 'Building report');
   try {
     finalizeVol(shared, ctx);
+    memProcFsFinal(shared, ctx);
     for (const t of shared.volTables || []) { // cross-view tables built from several plugin outputs
       const host = results.find((r) => r.name === (shared.volFile?.psxview || shared.volFile?.pspcid)) || results.find((r) => r.tool === 'Volatility 3');
       if (host) host.tables.push(t);
