@@ -2,6 +2,7 @@
 import { CATALOG, NOT_ACCEPTED_HELP, availability } from './catalog.js';
 import { markdown, csv, timelineCsv, findingsCsv, indicatorsCsv, leadsCsv, programsCsv, macbCsv, mitreSummary, indicatorLabel, defang } from './report.js';
 import { Grid, datasets, mftAllTables } from './grid.js';
+import { kindOf, lookup, verdict, getKey, setKey, refang } from './ioc/vt.js';
 import { bodyfile } from './ioc/macb.js';
 import { BUILTIN } from './core/bsearch.js';
 import { PROGRAM_COLUMNS } from './ioc/programs.js';
@@ -478,13 +479,106 @@ function indicatorsView(v) {
     <input type="search" id="iq" placeholder="filter indicators…" value="${esc(S.ind.q)}">
     <button class="tog ${S.ind.defang ? 'on' : ''}" id="idef">DEFANG</button>
     <button class="tog on" id="icopy">COPY VISIBLE VALUES</button>
+    <button class="tog ${getKey() ? 'on' : ''}" id="ivtkey" title="A VirusTotal key is only used for lookups you click. Nothing is sent automatically.">${getKey() ? 'VT KEY SET' : 'SET VT KEY'}</button>
     <span class="count">${list.length} indicators</span></div>
     <div id="itbl"></div>`;
-  table($('#itbl'), ['TYPE', 'VALUE', 'COUNT', 'SOURCES', 'CONTEXT'], list.map((i) => [indicatorLabel(i.type), fmt(i), i.count, i.sources.slice(0, 4).join(' | ') + (i.sources.length > 4 ? ` (+${i.sources.length - 4})` : ''), i.context]), { name: 'indicators' });
+  table($('#itbl'), ['TYPE', 'VALUE', 'VT', 'COUNT', 'SOURCES', 'CONTEXT'], list.map((i) => [indicatorLabel(i.type), fmt(i), { html: vtChip(i.value) }, i.count, i.sources.slice(0, 4).join(' | ') + (i.sources.length > 4 ? ` (+${i.sources.length - 4})` : ''), i.context]), { name: 'indicators' });
   $('#itype').addEventListener('change', (e) => { S.ind.type = e.target.value; indicatorsView(v); });
   const q = $('#iq'); q.addEventListener('input', debounce(() => { S.ind.q = q.value; indicatorsView(v); $('#iq').focus(); }, 250));
   $('#idef').addEventListener('click', () => { S.ind.defang = !S.ind.defang; indicatorsView(v); });
+  $('#ivtkey').addEventListener('click', (e) => vtKeyBox(e.target));
   $('#icopy').addEventListener('click', (e) => { navigator.clipboard?.writeText(list.map(fmt).join('\n')); e.target.textContent = 'COPIED'; setTimeout(() => (e.target.textContent = 'COPY VISIBLE VALUES'), 1200); });
+}
+
+// ---------------------------------------------------------------- VIRUSTOTAL (click to send, one value at a time)
+const VT = { cache: new Map(), open: null };
+/** A small button for one value. Nothing is sent until it is clicked. */
+export function vtChip(value, label) {
+  const k = kindOf(value);
+  if (!k) return '';
+  const c = VT.cache.get(k.value);
+  const v = c && c.summary ? verdict(c.summary) : null;
+  const cls = c ? (c.notFound ? 'vt-none' : v ? 'vt-' + v.sev : 'vt-err') : '';
+  const text = c ? (c.notFound ? 'not in VT' : v ? v.text : 'VT failed') : (label || 'VT');
+  return `<button class="vt ${cls}" data-vt="${esc(k.value)}" title="${c ? 'Click for the full VirusTotal result' : `Send this ${k.kind.replace('_', ' ')} to VirusTotal. Nothing is sent until you click.`}">${esc(text)}</button>`;
+}
+function vtRow(k, v) { return `<tr><td>${esc(k)}</td><td class="mono">${esc(String(v))}</td></tr>`; }
+function vtClose() { VT.open?.remove(); VT.open = null; }
+async function vtShow(value, anchor) {
+  const k = kindOf(value); if (!k) return;
+  vtClose();
+  const box = document.createElement('div');
+  box.className = 'vtpanel';
+  VT.open = box; document.body.appendChild(box);
+  const place = () => { const r = anchor.getBoundingClientRect(); box.style.top = Math.min(window.innerHeight - 40, r.bottom + 6) + 'px'; box.style.left = Math.max(8, Math.min(window.innerWidth - 480, r.left)) + 'px'; };
+  const draw = (body) => { box.innerHTML = `<div class="vth"><b>${esc(k.value)}</b><button class="vtx" data-vtclose>×</button></div>${body}`; place(); };
+  const key = getKey();
+  const guiLine = `<div class="vtfoot"><a href="${k.gui}" target="_blank" rel="noopener noreferrer">Open on virustotal.com</a> &nbsp;·&nbsp; opening the page sends nothing from Sudo-Z: your browser makes that request.</div>`;
+  if (!key) {
+    draw(`<div class="vtbody"><p>No VirusTotal API key is set, so Sudo-Z will not call the API.</p>
+      <p class="muted">A key is only used for lookups you click. It is kept in this browser and never written into a report or an export.</p>
+      <div class="vtkey"><input type="password" id="vtk" placeholder="VirusTotal API key" autocomplete="off"><button class="btn" id="vtsave">SAVE KEY</button></div></div>${guiLine}`);
+    box.querySelector('#vtsave').addEventListener('click', () => { const val = box.querySelector('#vtk').value.trim(); if (val) { setKey(val); vtShow(value, anchor); } });
+    box.querySelector('#vtk').addEventListener('keydown', (e) => { if (e.key === 'Enter') box.querySelector('#vtsave').click(); });
+    return;
+  }
+  const cached = VT.cache.get(k.value);
+  if (!cached) {
+    draw(`<div class="vtbody"><p>Sending the ${esc(k.kind.replace('_', ' '))} to VirusTotal…</p></div>`);
+    const res = await lookup(k.value, { key, local: !!LOCAL.caps });
+    VT.cache.set(k.value, res);
+    if (S.tab === 'indicators' || S.tab === 'artifacts') render();
+  }
+  const r = VT.cache.get(k.value);
+  if (!r.ok) { draw(`<div class="vtbody"><p class="bad">${esc(r.error)}</p></div>${guiLine}`); bind(); return; }
+  if (r.notFound) { draw(`<div class="vtbody"><p>VirusTotal has no record of this ${esc(k.kind.replace('_', ' '))}.</p><p class="muted">For a file that means nobody has submitted it. It is not a verdict either way, and on a targeted intrusion it is often the interesting answer.</p></div>${guiLine}`); bind(); return; }
+  const s = r.summary, vd = verdict(s);
+  const rows = [];
+  rows.push(vtRow('Verdict', vd.text));
+  if (s.label) rows.push(vtRow('Threat label', s.label));
+  if (s.families?.length) rows.push(vtRow('Families', s.families.join(', ')));
+  if (s.type) rows.push(vtRow('Type', s.type));
+  if (s.size) rows.push(vtRow('Size', fmtSize(s.size)));
+  if (s.firstSeen) rows.push(vtRow('First seen', s.firstSeen));
+  if (s.lastSeen) rows.push(vtRow('Last analysed', s.lastSeen));
+  if (s.signer) rows.push(vtRow('Signer', s.signer));
+  if (s.registrar) rows.push(vtRow('Registrar', s.registrar));
+  if (s.asOwner) rows.push(vtRow('AS owner', s.asOwner));
+  if (s.country) rows.push(vtRow('Country', s.country));
+  if (s.categories?.length) rows.push(vtRow('Categories', s.categories.join(', ')));
+  if (s.names?.length) rows.push(vtRow('Seen as', s.names.join(', ')));
+  if (s.tags?.length) rows.push(vtRow('Tags', s.tags.join(', ')));
+  draw(`<div class="vtbody">
+    <div class="vtverdict ${vd.sev}">${esc(vd.text)}</div>
+    <table class="vtt">${rows.join('')}</table>
+    ${s.hashes?.length ? `<div class="vtsec">HASH VARIATIONS</div><table class="vtt">${s.hashes.map(([a, b]) => vtRow(a, b)).join('')}</table>` : ''}
+    ${s.engines?.length ? `<div class="vtsec">DETECTIONS</div><div class="vteng">${s.engines.map((e) => esc(e)).join('<br>')}</div>` : ''}
+    <div class="muted vtvia">answered via the ${esc(r.via)}</div>
+  </div>${guiLine}`);
+  bind();
+  function bind() { box.querySelector('[data-vtclose]')?.addEventListener('click', vtClose); }
+  bind();
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-vt]');
+  if (b) { e.preventDefault(); e.stopPropagation(); vtShow(b.dataset.vt, b); return; }
+  if (VT.open && !e.target.closest('.vtpanel')) vtClose();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') vtClose(); });
+function vtKeyBox(anchor) {
+  vtClose();
+  const box = document.createElement('div'); box.className = 'vtpanel'; VT.open = box; document.body.appendChild(box);
+  const r = anchor.getBoundingClientRect(); box.style.top = (r.bottom + 6) + 'px'; box.style.left = Math.max(8, Math.min(window.innerWidth - 480, r.left)) + 'px';
+  box.innerHTML = `<div class="vth"><b>VirusTotal API key</b><button class="vtx" data-vtclose>×</button></div>
+    <div class="vtbody">
+      <p>Sudo-Z never sends anything to VirusTotal on its own. A key only enables the lookup buttons, and each button sends one value when you click it.</p>
+      <p class="muted">For a file only the hash is sent, never the file. Bear in mind that looking a hash up tells VirusTotal that someone holds that file, which on a live intrusion can be a tell.</p>
+      <p class="muted">The key is kept in this browser and is never written into a report, an export or an artifact.</p>
+      <div class="vtkey"><input type="password" id="vtk" placeholder="paste your key" autocomplete="off" value="${esc(getKey())}"><button class="btn" id="vtsave">SAVE</button><button class="btn" id="vtclear">FORGET</button></div>
+    </div>`;
+  box.querySelector('[data-vtclose]').addEventListener('click', vtClose);
+  box.querySelector('#vtsave').addEventListener('click', () => { setKey(box.querySelector('#vtk').value.trim()); vtClose(); render(); });
+  box.querySelector('#vtclear').addEventListener('click', () => { setKey(''); VT.cache.clear(); vtClose(); render(); });
 }
 
 // ---------------------------------------------------------------- TIMELINE
@@ -510,7 +604,7 @@ function artifactsView(v) {
     const a = h.parentElement; a.classList.toggle('open');
     const bd = a.querySelector('.bd'); if (bd.dataset.done) return; bd.dataset.done = 1;
     const f = r.files[+a.dataset.i];
-    bd.innerHTML = `<div class="hashes">${f.hashes ? `MD5 <b>${f.hashes.md5}</b> · SHA1 <b>${f.hashes.sha1 || ''}</b> · SHA256 <b>${f.hashes.sha256 || ''}</b>` : ''} · ${fmtSize(f.size)} · ${f.ms} ms</div>${(f.notes || []).map((n) => `<div class="note">${esc(n)}</div>`).join('')}<div class="tbls"></div>`;
+    bd.innerHTML = `<div class="hashes">${f.hashes ? `MD5 <b>${f.hashes.md5}</b> ${vtChip(f.hashes.md5)} · SHA1 <b>${f.hashes.sha1 || ''}</b> · SHA256 <b>${f.hashes.sha256 || ''}</b> ${vtChip(f.hashes.sha256)}` : ''} · ${fmtSize(f.size)} · ${f.ms} ms</div>${(f.notes || []).map((n) => `<div class="note">${esc(n)}</div>`).join('')}<div class="tbls"></div>`;
     const host = bd.querySelector('.tbls');
     f.tables.forEach((t, ti) => {
       const d = document.createElement('div');
@@ -556,6 +650,7 @@ function table(host, cols, rows, { pageSize = 200, name } = {}) {
     const slice = rows.slice(page * pageSize, page * pageSize + pageSize);
     host.innerHTML = `<table class="t"><thead><tr>${cols.map((c) => `<th>${esc(String(c).toUpperCase())}</th>`).join('')}</tr></thead><tbody>${slice.map((r) => `<tr>${r.map((c, i) => {
       if (cols[i] === 'Severity' || cols[i] === 'SEVERITY') return `<td class="nw"><span class="sev ${esc(c)}">${esc(SEV_SHORT[c] || c)}</span></td>`;
+      if (c && typeof c === 'object' && c.html != null) return `<td class="nw">${c.html}</td>`;
       return `<td class="${timeIdx.includes(i) && typeof c === 'string' && /^\d{4}-\d\d-\d\d/.test(c) ? 'time' : typeof c === 'number' ? 'num' : ''}">${esc(c)}</td>`;
     }).join('')}</tr>`).join('')}</tbody></table>${pages > 1 ? `<div class="pager"><button data-p="-1" ${page === 0 ? 'disabled' : ''}>◂ PREV</button><span>page ${page + 1} / ${pages} · ${rows.length} rows</span><button data-p="1" ${page >= pages - 1 ? 'disabled' : ''}>NEXT ▸</button></div>` : ''}`;
     host.querySelectorAll('[data-p]').forEach((b) => b.addEventListener('click', () => { page += +b.dataset.p; draw(); }));

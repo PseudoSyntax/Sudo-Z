@@ -297,6 +297,22 @@ Where it shows: a MACB box on SITREP, four GRID views (anomalies, content vs fil
 
 The INTAKE panel shows a bar under the EXECUTE button with the percentage, the stage it is on (which parser, which file) and an estimate of the time left. The estimate comes from a smoothed recent rate rather than total elapsed time, because the work is not linear: opening disk images is the first 40 per cent and parsing is the rest. It holds off until there is enough of a run to base a number on, so a short job never flashes a silly figure, and it will correct upwards if a large image turns up part way through rather than only ever counting down. If the bar stops moving while the stage label keeps changing, it says "still working" instead of showing a stale countdown.
 
+## VirusTotal, one click at a time
+
+Nothing is uploaded by Sudo-Z, and VirusTotal is the one place that could break that, so it is deliberate every time. A **VT** button sits beside every hash in ARTIFACTS and every indicator that can be looked up: hashes, domains, IPs and URLs. Values that cannot be looked up, such as an AV detection name, get no button.
+
+* Nothing is sent automatically, in bulk, or on load. One click sends one value.
+* Files are never uploaded, only their hash. Worth remembering that looking a hash up tells VirusTotal somebody holds that file, which on a live intrusion is itself a tell.
+* The API key lives in this browser and is never written into a report, an export or an artifact.
+* With no key set there is still a button: it opens the VirusTotal page for that value in a new tab, so the request comes from your own browser session and Sudo-Z sends nothing at all.
+* Defanged indicators still work. `evil[.]example[.]com` and `hxxp://bad[.]com/a` are refanged before the lookup.
+
+The result opens beside the button: the verdict, the threat label and family, first seen and last analysed, the engines that flagged it, and for a file every hash variation VirusTotal holds, including imphash, the rich PE header hash, ssdeep, TLSH, vhash and authentihash. For a domain or IP it shows the registrar, AS owner, country and categories. The button itself then carries the verdict, so a page of indicators shows at a glance which ones you have already checked.
+
+A single engine hit is reported as medium rather than critical, because one engine is wrong often enough to matter. Nothing known at all is stated as nothing known, not as clean: on a targeted intrusion that is frequently the interesting answer.
+
+VirusTotal's API does not allow a browser on a static origin to call it, so on the GitHub Pages site the button normally opens the page instead. With the home install running, the lookup is forwarded through the local server, which has no such restriction, and the key is passed through without being stored or logged.
+
 ## GREP: searching every file at once
 
 The STRINGS tab is a grep across everything loaded, including files pulled out of zips and disk images. Five modes: built-in patterns, find text, regular expression, a list of strings, or every string. ASCII and UTF-16LE, with byte offsets, so it matches `bstrings` output.

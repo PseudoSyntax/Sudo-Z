@@ -14,7 +14,7 @@ so other websites open in your browser cannot drive it.
 
 Standard library only. Usage: python3 tools/server.py [port] [--no-browser]
 """
-import base64, json, mimetypes, os, platform, re, shutil, subprocess, sys, threading, time, uuid, webbrowser
+import base64, json, urllib.request, urllib.error, mimetypes, os, platform, re, shutil, subprocess, sys, threading, time, uuid, webbrowser
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, unquote, parse_qs
@@ -483,6 +483,27 @@ class Handler(SimpleHTTPRequestHandler):
             job = new_job('vol3', len(plugins)); job['image'] = img; job['source'] = img
             threading.Thread(target=run_vol, args=(job, img, plugins), daemon=True).start()
             return self.send_json(job)
+        if u.path == '/api/vt/lookup':
+            # One lookup, forwarded because the VirusTotal API does not allow a browser on a
+            # static origin to call it. The key is passed through from the browser and is not
+            # stored, logged or written to disk here.
+            vpath = str(body.get('path', ''))
+            key = str(body.get('key', ''))
+            if not re.fullmatch(r'(files|domains|ip_addresses|urls)/[A-Za-z0-9._:\-]{1,512}', vpath):
+                return self.send_json({'error': 'not a VirusTotal lookup path'}, 400)
+            if not re.fullmatch(r'[A-Za-z0-9]{32,128}', key):
+                return self.send_json({'error': 'that does not look like a VirusTotal API key'}, 400)
+            req = urllib.request.Request('https://www.virustotal.com/api/v3/' + vpath,
+                                         headers={'x-apikey': key, 'accept': 'application/json', 'user-agent': 'sudo-z'})
+            try:
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    return self.send_json({'data': json.loads(r.read().decode('utf-8', 'replace'))})
+            except urllib.error.HTTPError as e:
+                if e.code == 404: return self.send_json({'notFound': True})
+                msg = {401: 'VirusTotal rejected the API key', 429: 'VirusTotal rate limit reached (the free key allows 4 lookups a minute)'}.get(e.code, f'VirusTotal returned {e.code}')
+                return self.send_json({'error': msg}, 200)
+            except Exception as e:
+                return self.send_json({'error': f'could not reach VirusTotal: {e}'}, 200)
         if u.path == '/api/memprocfs/run':
             img = os.path.expanduser(str(body.get('path', '')).strip().strip('"'))
             if not os.path.isfile(img): return self.send_json({'error': f'image not found: {img}'}, 400)
