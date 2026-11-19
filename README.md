@@ -6,6 +6,9 @@ Drop Windows artifacts (one file, many files, a folder, a KAPE triage zip or a V
 
 Nothing is uploaded. Files are read with the browser File API and parsed in a Web Worker on your own machine. Sudo-Z is a static site, so it runs from GitHub Pages and keeps working offline once loaded.
 
+<img width="1024" height="576" alt="image" src="https://github.com/user-attachments/assets/975fc593-3d31-4ba3-b227-f62c84b5cc97" />
+
+
 ## Quick start
 
 **Option 1: just use it.** Open **https://pseudosyntax.github.io/Sudo-Z/**, drop your files, a KAPE zip, or a disk image (E01, VHD, VHDX, raw, QCOW2), press EXECUTE ANALYSIS. Nothing to install, always the latest version.
