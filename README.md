@@ -51,6 +51,9 @@ The installer downloads the latest commit from this repo, checks it is a complet
 
 Opening `index.html` straight from disk will not work, because browsers block ES modules and Web Workers on `file://`. That is why the launcher runs a small web server bound to localhost only.
 
+
+For every workflow, the cross-artifact checks that run after it, and the follow-on triage when one comes back positive, see [docs/WORKFLOWS.md](docs/WORKFLOWS.md).
+
 ## Website vs home install
 
 The website runs everything Sudo-Z rebuilt in JavaScript, in your browser. A browser cannot run Python or Windows programs, so a few things only work in the home install, where `sudo-z` starts a small local server (Python 3.8+, standard library only) next to the console:
