@@ -266,6 +266,13 @@ Every file has four times on NTFS, and they live in two places. MACB is Modified
 | Programs | PE header compile time; Amcache LinkDate | the PE file; Amcache.hve |
 | Shortcuts and jump lists | the target's B, M, A when it was opened, and its $MFT entry and sequence | LNK header and shell items |
 
+Witnesses outside the $MFT, which is where timestomping is actually caught. `$SI` can be rewritten with one API call, so the useful question is what else recorded a time for the same file:
+
+* **The USN journal.** It is append only, so an edit cannot remove what it already wrote. A `BasicInfoChange` record with no data, rename or security change beside it is what `SetFileTime` produces: the timestamps were edited and nothing else about the file was. The journal also dates the edit, so Sudo-Z can say the times were rewritten at 12:00 on the 5th while the file now claims to be from 2019. Two more follow from it: data written after the file says it was last modified, and journal records that predate the born time.
+* **Execution artifacts.** Prefetch, Amcache, ShimCache and UserAssist are written by the system as a program runs. A program that ran before its own born time means the born time is wrong, not that time ran backwards.
+* **Sub-second precision.** Windows writes all four times to 100 ns. One time landing exactly on a whole second next to three that do not was written from a formatted string by a tool.
+* **The tool itself.** `timestomp.exe`, SetMace, file time editors, `(Get-Item x).CreationTime =`, `Set-ItemProperty` on a timestamp and `[IO.File]::SetCreationTime` are picked out of command lines and script blocks, and dated, so you can line the edit up against the files whose times moved.
+
 Checks on the $MFT itself:
 
 * **$SI born before $FN born.** The visible born time was moved back.

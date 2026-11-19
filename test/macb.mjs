@@ -106,7 +106,7 @@ ok(rep.timeline.some((e) => /Document last saved \(OOXML metadata\)/.test(e.type
 ok(rep.macb?.anomalies.some((a) => a.rule === 'docModAfterFs' && /Q1\.docm/.test(a.path) && /ZIP entry/.test(a.detail)), 'docm saved after its archived file system M (NTFS extra times)');
 ok(!rep.macb?.anomalies.some((a) => a.rule === 'docModAfterFs' && /scan\.pdf/.test(a.path)), 'PDF with matching times is not flagged');
 ok(rep.macb?.embedded.some((e) => /ZIP entry \(UTC \(NTFS extra\)\)/.test(e.source) && e.M === '2024-01-01T00:00:00.0000000Z'), 'zip NTFS extra times recorded as container times');
-ok(rep.meta.version === '1.13.0', 'version 1.13.0');
+ok(rep.meta.version === '1.14.0', 'version 1.14.0');
 
 // ------------------------------------------------------------ 3. MFTECmd CSV: all eight times feed the same rules
 const H = 'EntryNumber,SequenceNumber,InUse,ParentEntryNumber,ParentSequenceNumber,ParentPath,FileName,Extension,FileSize,ReferenceCount,ReparseTarget,IsDirectory,HasAds,IsAds,SI<FN,uSecZeros,Copied,SiFlags,NameType,Created0x10,Created0x30,LastModified0x10,LastModified0x30,LastRecordChange0x10,LastRecordChange0x30,LastAccess0x10,LastAccess0x30,UpdateSequenceNumber,LogfileSequenceNumber,SecurityId,ObjectIdFileDroid,LoggedUtilStream,ZoneIdContents,SourceFile,ParseErrors';
@@ -116,6 +116,44 @@ const rep2 = await analyze([{ name: '20260306_MFTECmd_$MFT_Output.csv', data: en
 const allT = rep2.files[0].tables.find((t) => t.title === 'All MFT entries');
 ok(allT && allT.columns.length === 17 && allT.rows[0][8] === '2026-03-09T12:00:00.1234567Z', 'MFTECmd CSV fills the 17 column All MFT entries table');
 ok(rep2.macb?.anomalies.some((a) => a.rule === 'modAfterChange' && /upd\.exe/.test(a.path) && a.sev === 'high'), 'MFTECmd CSV: M later than C on a user-folder program is high');
+
+// ---------------------------------------------------------------- 4. the journal, execution evidence and tooling as witnesses
+const ctx2 = new Context();
+const W = (s) => `2026-03-05T${s}Z`;
+const rows2 = [
+  { entry: 0, seq: 1, inUse: true, isDir: false, parentPath: '.', name: '$MFT', size: 1, ads: [], si: { created: '2025-01-10T08:00:00.1234567Z', modified: '', accessed: '', recordChanged: '' }, fn: null },
+  // the file claims 2019 but the journal saw a data write and a timestamps-only change last March
+  row(700, 1, '.\\Users\\bob\\AppData\\Roaming', 'svc.exe', ['2019-02-01T00:00:00.0000000Z', '2019-02-01T00:00:00.0000000Z', '2019-02-01T00:00:00.0000000Z', W('12:00:02.3456789')], [W('12:00:00.1234567'), W('12:00:00.1234567'), W('12:00:00.1234567'), W('12:00:00.1234567')]),
+  // ran before it says it was born
+  row(701, 1, '.\\Users\\bob\\Downloads', 'tool.exe', ['2026-03-20T10:00:00.1234567Z', '2026-03-20T10:00:00.1234567Z', '2026-03-20T10:00:00.1234567Z', '2026-03-20T10:00:00.1234567Z'], ['2026-03-20T10:00:00.1234567Z', '2026-03-20T10:00:00.1234567Z', '2026-03-20T10:00:00.1234567Z', '2026-03-20T10:00:00.1234567Z']),
+  // the journal mentions it before it claims to have been born, and the creation record is not in the journal
+  row(703, 1, '.\\ProgramData\\upd', 'agent.exe', ['2026-03-10T08:00:00.1234567Z', '2026-03-10T08:00:00.1234567Z', '2026-03-10T08:00:00.1234567Z', '2026-03-10T08:05:00.1234567Z'], ['2026-03-10T08:00:00.1234567Z', '2026-03-10T08:00:00.1234567Z', '2026-03-10T08:00:00.1234567Z', '2026-03-10T08:00:00.1234567Z']),
+  // B is a whole second while the rest keep 100 ns precision
+  row(702, 1, '.\\Users\\bob\\AppData\\Local\\Temp', 'mix.exe', [W('09:00:00.0000000'), W('09:00:01.7654321'), W('09:00:02.1112223'), W('09:00:03.9998887')], [W('09:00:01.7654321'), W('09:00:01.7654321'), W('09:00:01.7654321'), W('09:00:01.7654321')]),
+];
+const shared2 = { mft: { rows: rows2 }, usn: new Map([
+  [700, { first: W('11:59:00'), last: W('12:00:02'), data: W('12:00:01'), create: W('11:59:00'), basicOnly: W('12:00:02'), name: 'svc.exe', reasons: 0 }],
+  [703, { first: W('07:00:00'), last: W('07:30:00'), data: W('07:30:00'), create: '', basicOnly: '', name: 'agent.exe', reasons: 0 }],
+  [702, { first: W('09:00:00'), last: W('09:00:03'), data: '', create: W('09:00:00'), basicOnly: '', name: 'mix.exe', reasons: 0 }],
+]) };
+ctx2.exec_({ path: 'C:\\Users\\bob\\Downloads\\tool.exe', tool: 'PECmd', file: 'TOOL.EXE-1234.pf', time: '2026-03-05T12:30:00Z', source: 'Prefetch' });
+ctx2.event({ time: W('12:00:02'), tool: 'EvtxECmd', file: 'Security.evtx', type: 'Process created', desc: 'powershell.exe -c "(Get-Item C:\\Users\\bob\\AppData\\Roaming\\svc.exe).CreationTime = \'2019-02-01 00:00:00\'"' });
+ctx2.event({ time: W('12:05:00'), tool: 'EvtxECmd', file: 'Security.evtx', type: 'Process created', desc: 'C:\\Users\\bob\\timestomp.exe -z "01/02/2019 00:00:00" svc.exe' });
+const m2 = analyseMacb(ctx2, shared2, {}, Date.parse('2026-04-01T00:00:00Z'));
+const h2 = (rule, rx, msg) => ok(m2.anomalies.some((a) => a.rule === rule && (!rx || rx.test(a.path + ' ' + a.detail))), msg);
+h2('usnBasicOnly', /svc\.exe/, 'USN: a BasicInfoChange with nothing else is a timestamps-only edit');
+ok(m2.anomalies.find((a) => a.rule === 'usnBasicOnly')?.detail.includes('2019'), 'and it says the file now claims a much earlier modified time');
+h2('usnAfterMod', /svc\.exe/, 'USN: data written after the claimed modified time');
+h2('usnBeforeBorn', /agent\.exe/, 'USN: the journal mentions the record before the file says it was born');
+ok(!m2.anomalies.some((a) => a.rule === 'usnBeforeBorn' && /svc\.exe/.test(a.path)), 'not fired when the journal holds the FileCreate record, where B moved back rather than forward');
+h2('ranBeforeBorn', /tool\.exe/, 'execution evidence: Prefetch says it ran before the born time');
+ok(m2.anomalies.find((a) => a.rule === 'ranBeforeBorn')?.detail.includes('Prefetch'), 'and it names the artifact that saw the run');
+h2('mixedPrecision', /mix\.exe/, 'one whole-second time beside 100 ns ones');
+ok(ctx2.findings.some((f) => /Timestamp editing: timestomp \(Metasploit \/ MAFIA\)/.test(f.title) && f.sev === 'critical'), 'timestomp.exe on a command line is critical');
+ok(ctx2.findings.some((f) => /Timestamp editing: a PowerShell timestamp assignment/.test(f.title)), 'a PowerShell CreationTime assignment is caught too');
+ok(m2.sources.some((s) => /USN journal/.test(s.source)) && m2.sources.some((s) => /execution artifacts/.test(s.source)), 'the sources list names the journal and the run times');
+for (const r of ['usnBasicOnly', 'usnAfterMod', 'usnBeforeBorn', 'ranBeforeBorn', 'mixedPrecision']) ok(!!m2.rules[r] && m2.rules[r].length > 10, `${r} is named in the rules map for the UI`);
+ok(ctx2.findings.some((f) => /MACB: Timestamps rewritten, recorded in the USN journal/.test(f.title)), 'the journal rule raises its own finding');
 
 console.log(fail ? `\n${fail} FAILED` : '\nall MACB checks passed');
 process.exit(fail ? 1 : 0);

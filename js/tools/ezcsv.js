@@ -240,10 +240,23 @@ export function runEzCsv(u8, f, ctx, kind, shared) {
       keep(); break;
     }
     case 'usn': {
-      const cN = col('Name'), cPP = col('ParentPath'), cT = col('UpdateTimestamp'), cR = col('UpdateReasons');
+      const cN = col('Name'), cPP = col('ParentPath'), cT = col('UpdateTimestamp'), cR = col('UpdateReasons'), cE = col('EntryNumber');
+      const byEntry = shared.usn || (shared.usn = new Map());
       let n = 0;
       for (const r of rows) {
         const name = get(r, cN); const reasons = get(r, cR);
+        const ent = +get(r, cE);
+        if (ent && byEntry.size < 400000) {
+          const t = iso(get(r, cT)) || '';
+          let e = byEntry.get(ent);
+          if (!e) { e = { first: t, last: t, data: '', create: '', basicOnly: '', name, reasons: 0 }; byEntry.set(ent, e); }
+          if (t && (!e.first || t < e.first)) e.first = t;
+          if (t && t > e.last) e.last = t;
+          if (name && /\.[a-z0-9]{1,8}$/i.test(name)) e.name = name;
+          if (/Data(Overwrite|Extend|Truncation)/i.test(reasons) && t > e.data) e.data = t;
+          if (/FileCreate/i.test(reasons) && (!e.create || t < e.create)) e.create = t;
+          if (/BasicInfoChange/i.test(reasons) && !/Data|Rename|SecurityChange|EaChange/i.test(reasons) && t > e.basicOnly) e.basicOnly = t;
+        }
         if (!/\.(exe|dll|ps1|bat|vbs|js|hta|scr|sys|lnk|zip|7z|rar)$/i.test(name) || !/FileCreate|FileDelete|RenameNewName/i.test(reasons)) continue;
         const p = `${get(r, cPP) || ''}\\${name}`.replace(/^\./, 'C:');
         ctx.event({ time: iso(get(r, cT)), tool: 'MFTECmd', file: f.name, type: `USN ${reasons.match(/FileCreate|FileDelete|RenameNewName/i)[0]}`, desc: p });

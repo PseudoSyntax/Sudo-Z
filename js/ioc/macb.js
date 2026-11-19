@@ -12,7 +12,7 @@ import { baseName, SEV_RANK } from './heuristics.js';
 const DAY = 86400000, SLACK = 2000;
 const ROOT_SYSTEM = /^[a-z]:\\(ntdetect\.com|ntldr|boot\.ini|bootmgr|bootsect\.bak|io\.sys|msdos\.sys|config\.sys|autoexec\.bat|pagefile\.sys|hiberfil\.sys|swapfile\.sys|dumpstack\.log(\.tmp)?)$/i;
 const WEB_CACHE = /\\(temporary internet files|inetcache|webcache|cache2?|code cache|gpucache|service worker)\\/i;
-const MFT_RULES = new Set(['siBeforeFn', 'bornAfterChange', 'modAfterChange', 'allSame', 'preVolume', 'future']);
+const MFT_RULES = new Set(['siBeforeFn', 'bornAfterChange', 'modAfterChange', 'allSame', 'preVolume', 'future', 'mixedPrecision']);
 const EXEC = /\.(exe|dll|sys|scr|com|cpl|ocx|ps1|psm1|bat|cmd|vbs|vbe|js|jse|wsf|hta|msi|lnk|jar)$/i;
 const DOCS = /\.(docx?|docm|xlsx?|xlsm|xlsb|pptx?|pptm|pdf|rtf|one)$/i;
 export const USER_WRITABLE = /^[a-z]:\\(users|documents and settings)\\(?!default\\|default user\\|all users\\)|^[a-z]:\\programdata\\|\\windows\\temp\\|^[a-z]:\\perflogs\\|\\\$recycle\.bin\\|\\recycler\\|^[a-z]:\\temp\\|^[a-z]:\\[^\\]+\.[a-z0-9]{2,4}$/i;
@@ -45,6 +45,11 @@ const RULES = {
   lnkBornBack: { title: 'Born time moved back since a shortcut recorded it', why: 'LNK files and jump lists keep a copy of the target\'s B, M and A from when it was opened. The current $MFT born time is earlier than that copy, for the same file record.', mitre: ['T1070.006'] },
   lnkModBack: { title: 'Modified time moved back since a shortcut recorded it', why: 'M only moves forward on a normal write. The current M is earlier than the copy a shortcut took, so M was set back or the file was swapped for an older copy.', mitre: ['T1070.006'] },
   replaced: { title: 'File replaced since a shortcut recorded it', why: 'The shortcut points to an older file record (different $MFT entry or sequence) or an earlier born time. The file at that path was deleted and recreated, for example a document swapped for a payload with the same name.', mitre: ['T1036'] },
+  usnBasicOnly: { title: 'Timestamps rewritten, recorded in the USN journal', why: 'The change journal holds a BasicInfoChange record with no data, rename or security change beside it. That combination is what SetFileTime produces, which is to say the file\'s timestamps were edited and nothing else about it was. The journal is append only, so the edit is recorded even though the times it wrote are not.', mitre: ['T1070.006'] },
+  usnAfterMod: { title: 'Data written after the file says it was last modified', why: 'The change journal records a data write at a time later than the modified time the file now shows. Writing data updates M, so M was moved back afterwards.', mitre: ['T1070.006'] },
+  usnBeforeBorn: { title: 'Journal records predate the file\'s born time', why: 'The change journal mentions this file record before the file claims to have been created. The journal is written as things happen, so the born time was moved forward or the file is older than it says.', mitre: ['T1070.006'] },
+  ranBeforeBorn: { title: 'Program ran before the file says it was created', why: 'Prefetch, Amcache, ShimCache or UserAssist recorded this program running at a time earlier than its born time on disk. Execution artifacts are written by the system as the program runs and are awkward to edit, so the file system time is the one to doubt.', mitre: ['T1070.006', 'T1036'] },
+  mixedPrecision: { title: 'Some times have 100 ns precision and others are whole seconds', why: 'Windows writes all four times with 100 ns precision. A time that lands exactly on a second, next to others that do not, was written from a formatted string by a tool rather than by the file system.', mitre: ['T1070.006'] },
   burstBorn: { title: 'Mass file creation in one minute', why: 'Many files born in the same minute in user-writable folders: an archive extraction, installer or dropper unpacking.', mitre: ['T1105'] },
   burstMod: { title: 'Mass file modification in one minute', why: 'Many user files modified in the same minute. Ransomware encrypting in place produces exactly this pattern.', mitre: ['T1486'] },
 };
@@ -67,6 +72,7 @@ export function analyseMacb(ctx, shared, window = {}, now = Date.now()) {
   // keys the other sources need from the $MFT
   const needKey = new Set(), needEntry = new Set();
   for (const r of ctx.ftimes) { if (r.kind === 'fs') continue; const p = winPathOf(r.path); if (p) needKey.add(normKey(p)); if (r.entry != null) needEntry.add(r.entry); }
+  for (const k of ctx.exec.keys()) needKey.add(k); // so "ran before it was born" can find the record
   const idx = new Map(), byEntry = new Map();
   const rows = shared.mft?.rows || [];
   const volBorn = tms(rows.find((r) => r.entry === 0)?.si?.created);
@@ -119,6 +125,49 @@ export function analyseMacb(ctx, shared, window = {}, now = Date.now()) {
     add('burstMod', odd ? 'high' : b.dirs.size >= 20 ? 'medium' : 'low', `${b.dirs.size} folder(s) under C:\\Users`, `${b.n} user files modified ${isoMs(k * 60000).slice(0, 16)}; most common extension .${ext} (${Math.round(share * 100)}%)`, { siM: isoMs(k * 60000) });
   }
   clusters.sort((a, b) => b.files - a.files);
+
+  // ---------------------------------------------------------------- the change journal as a witness
+  // $SI can be rewritten in one call; the USN journal cannot, so where they disagree the journal wins.
+  const usn = shared.usn;
+  if (usn && usn.size) {
+    const seen = new Set();
+    for (const r of rows) {
+      if (r.isDir || !r.si) continue;
+      const u = usn.get(r.entry);
+      if (!u) continue;
+      const path = `${r.parentPath}\\${r.name}`.replace(/^\./, 'C:');
+      if (u.name && r.name && u.name.toLowerCase() !== r.name.toLowerCase()) continue; // the record was reused
+      const key = `${r.entry}|${path.toLowerCase()}`;
+      if (seen.has(key)) continue; seen.add(key);
+      const B = tms(r.si.created), M = tms(r.si.modified);
+      const T = { siB: isoOf(r.si.created), siM: isoOf(r.si.modified), siA: isoOf(r.si.accessed), siC: isoOf(r.si.recordChanged), fnB: isoOf(r.fn?.created), entry: `${r.entry}-${r.seq}`, source: 'USN journal' };
+      const bo = tms(u.basicOnly), dw = tms(u.data), first = tms(u.first);
+      if (isFinite(bo)) {
+        const stale = isFinite(M) && M < bo - DAY;
+        add('usnBasicOnly', stale ? sevFor(path, true) : sevFor(path, false), path,
+          `BasicInfoChange only, recorded ${isoMs(bo)}${stale ? `; the file now says it was last modified ${T.siM}, ${dur(bo - M)} earlier` : ''}`, T);
+      }
+      if (isFinite(dw) && isFinite(M) && M < dw - DAY) add('usnAfterMod', sevFor(path, true), path, `data written ${isoMs(dw)} but M says ${T.siM} (${dur(dw - M)} earlier)`, T);
+      if (isFinite(first) && isFinite(B) && first < B - DAY && !isFinite(tms(u.create))) add('usnBeforeBorn', sevFor(path, true), path, `journal first mentions this record ${isoMs(first)}, B says ${T.siB} (${dur(B - first)} later)`, T);
+      // mixed precision across the four $SI times
+      const parts = [['B', r.si.created], ['M', r.si.modified], ['A', r.si.accessed], ['C', r.si.recordChanged]].filter(([, v]) => tms(v) > 0);
+      const whole = parts.filter(([, v]) => zeroFrac(v)), frac = parts.filter(([, v]) => !zeroFrac(v));
+      if (whole.length && frac.length && USER_WRITABLE.test(path) && EXEC.test(path)) add('mixedPrecision', 'medium', path, `${whole.map(([k]) => k).join(', ')} land exactly on a second; ${frac.map(([k]) => k).join(', ')} do not`, T);
+    }
+  }
+
+  // ---------------------------------------------------------------- execution evidence as a witness
+  // a program cannot run before it exists
+  for (const [key, runs] of ctx.exec) {
+    const rec = idx.get(key);
+    if (!rec || !isFinite(rec.B)) continue;
+    const earliest = runs.map((x) => tms(x.time)).filter((t) => isFinite(t) && t > Date.UTC(2000, 0, 1)).sort((a, b) => a - b)[0];
+    if (!isFinite(earliest) || earliest >= rec.B - DAY) continue;
+    const who = [...new Set(runs.filter((x) => isFinite(tms(x.time)) && tms(x.time) === earliest).map((x) => x.source))].join(', ');
+    add('ranBeforeBorn', EXEC.test(rec.path) ? 'high' : 'medium', rec.path,
+      `${who || 'execution evidence'} says it ran ${isoMs(earliest)}, ${dur(rec.B - earliest)} before the born time ${isoMs(rec.B)}`,
+      { siB: isoMs(rec.B), siM: isoMs(rec.M), entry: `${rec.entry}-${rec.seq}`, source: who });
+  }
 
   // file system times from disk image metadata (when no $MFT was parsed) and archive entries
   const imgFs = new Map(), zipFs = new Map();
@@ -181,9 +230,38 @@ export function analyseMacb(ctx, shared, window = {}, now = Date.now()) {
     ctx.finding({ sev: worst, category: rule.startsWith('burst') ? (rule === 'burstMod' ? 'Impact' : 'File System') : 'Defense Evasion', tool: 'Sudo-Z MACB', file: list[0].file || '$MFT', time: real[0].siB || real[0].siM || real[0].embM || '', title: `MACB: ${R.title}${n > 1 ? ` (${n} files)` : lead ? `: ${lead}` : ''}`, detail: R.why + (wide ? ` Seen on ${n} of ${fsFiles} files: check for a system clock change or a bulk copy tool before calling it timestomping; the files listed first stand out most.` : bulk ? ` ${bulk} of the listed files sit in folders where many files share the anomaly (installer or archive extraction).` : ''), evidence: real.slice(0, 20).map((a) => `${a.path}  ${a.detail}`).join('\n'), mitre: R.mitre });
   }
 
+  // tools and one-liners that set timestamps, from anything that carries a command line
+  const TOOLS = [
+    [/\btimestomp(\.exe)?\b/i, 'timestomp (Metasploit / MAFIA)'],
+    [/\bsetmace(\.exe)?\b/i, 'SetMace'],
+    [/\bnewfiletime(\.exe)?\b|\battributemagic\b|\bbulkfilechanger\b|\bnirsoft.{0,20}filetime\b/i, 'a file time editor'],
+    [/\b(creationtime|lastwritetime|lastaccesstime)\s*=/i, 'a PowerShell timestamp assignment'],
+    [/Set-ItemProperty[^\r\n]{0,120}\b(CreationTime|LastWriteTime|LastAccessTime)\b/i, 'Set-ItemProperty on a timestamp'],
+    [/\[IO\.File\]::Set(Creation|LastWrite|LastAccess)Time/i, 'the .NET SetCreationTime API from PowerShell'],
+    [/\bSetFileTime\b/, 'the SetFileTime API'],
+  ];
+  const toolHits = [];
+  for (const e of ctx.timeline) {
+    const text = `${e.desc || ''} ${e.type || ''}`;
+    for (const [rx, what] of TOOLS) if (rx.test(text)) { toolHits.push({ time: e.time, what, text: text.slice(0, 300), file: e.file }); break; }
+    if (toolHits.length > 200) break;
+  }
+  if (toolHits.length) {
+    const byWhat = new Map();
+    for (const h of toolHits) { if (!byWhat.has(h.what)) byWhat.set(h.what, []); byWhat.get(h.what).push(h); }
+    for (const [what, list] of byWhat) ctx.finding({
+      sev: /timestomp|SetMace/i.test(what) ? 'critical' : 'high', category: 'Defense Evasion', tool: 'Sudo-Z MACB', file: list[0].file || '', time: list[0].time,
+      title: `Timestamp editing: ${what} seen${list.length > 1 ? ` ${list.length} times` : ''}`,
+      detail: 'Something on this host ran a command whose job is to change file timestamps. Compare the time this ran with the MACB anomalies: files whose times were set are usually the ones named on the command line.',
+      evidence: list.slice(0, 10).map((h) => `${h.time || ''}  ${h.text}`).join('\n'), mitre: ['T1070.006'],
+    });
+  }
+
   const sl = ctx.settings.lastAccess;
   const accessNote = sl ? `NtfsDisableLastAccessUpdate = 0x${(sl.value >>> 0).toString(16)} (${lastAccessText(sl.value)}). ${/disabled/.test(lastAccessText(sl.value)) ? 'A (accessed) times are not updated on this system: do not read them as access.' : 'A times are updated, but lazily (up to an hour late) and also by antivirus and indexing.'}` : 'NtfsDisableLastAccessUpdate not seen (no SYSTEM hive). Windows 10 1803+ only updates A on small system volumes by default, and lazily: treat A (accessed) as weak evidence.';
   const sources = new Map(); if (fsFiles) sources.set('$MFT ($SI + $FN)', fsFiles);
+  if (usn && usn.size) sources.set('USN journal ($J)', usn.size);
+  if (ctx.exec.size) sources.set('execution artifacts (run times)', ctx.exec.size);
   for (const r of ctx.ftimes) sources.set(r.source, (sources.get(r.source) || 0) + 1);
   return { fsFiles, volumeBorn: isoMs(volBorn), counts, anomalies: anomalies.sort((a, b) => SEV_RANK[b.sev] - SEV_RANK[a.sev] || (a.bulk || 0) - (b.bulk || 0)).slice(0, 5000), anomaliesTotal: anomalies.length, clusters: clusters.slice(0, 200), embedded, sources: [...sources].map(([source, n]) => ({ source, n })), accessNote, rules: Object.fromEntries(Object.entries(RULES).map(([k, v]) => [k, v.title])) };
 }
